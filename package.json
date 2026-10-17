@@ -1,0 +1,30 @@
+{
+  "name": "dukaansetu-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --mode dev",
+    "dev:uat": "vite --mode uat",
+    "dev:preprod": "vite --mode preprod",
+    "dev:prod": "vite --mode prod",
+    "build": "tsc -b && vite build --mode prod",
+    "build:dev": "tsc -b && vite build --mode dev",
+    "build:uat": "tsc -b && vite build --mode uat",
+    "build:preprod": "tsc -b && vite build --mode preprod",
+    "build:prod": "tsc -b && vite build --mode prod",
+    "preview": "vite preview --mode prod"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  }
+}
