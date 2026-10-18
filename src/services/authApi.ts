@@ -20,6 +20,13 @@ export interface AuthSession {
   csrfToken?: string
 }
 
+export interface AuthActionResult {
+  message: string
+  /** A one-time local testing token. This field is only populated in dev. */
+  developmentToken?: string
+  session?: AuthSession
+}
+
 export class AuthApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message)
@@ -174,6 +181,32 @@ function responseMessage(body: unknown, fallback: string) {
   return stringValue(message) || fallback
 }
 
+function actionResult(payload: unknown, fallback: string): AuthActionResult {
+  const root = objectValue(payload)
+  const data = objectValue(root.data)
+  const message = stringValue(root.message ?? data.message) || responseMessage(payload, fallback)
+  const sessionPayload = Object.keys(root).length ? { ...root, ...data } : payload
+  let session: AuthSession | undefined
+  try {
+    if (stringValue(root.accessToken ?? root.access_token ?? root.token ?? data.accessToken ?? data.access_token ?? data.token)) {
+      session = mapSession(sessionPayload)
+    }
+  } catch {
+    // Action endpoints may return a message without a complete session.
+  }
+
+  // Development tokens are intentionally parsed only in dev. In every other
+  // environment the response is reduced to its user-safe message.
+  const developmentToken = appConfig.environment === 'dev'
+    ? stringValue(root.developmentToken ?? root.development_token ?? root.localToken ?? root.local_token ?? data.developmentToken ?? data.development_token ?? data.localToken ?? data.local_token ?? root.verificationToken ?? root.verification_token ?? root.resetToken ?? root.reset_token ?? data.verificationToken ?? data.verification_token ?? data.resetToken ?? data.reset_token ?? root.token ?? data.token)
+    : ''
+  return {
+    message,
+    ...(developmentToken ? { developmentToken } : {}),
+    ...(session ? { session } : {}),
+  }
+}
+
 async function request(path: string, init: RequestInit = {}) {
   if (!authConfigured()) throw new AuthApiError(unavailableMessage())
   const headers = new Headers(init.headers)
@@ -240,6 +273,47 @@ export const authApi = {
       if (error instanceof AuthApiError && !error.status) return { identity: null, session: null }
       throw error
     }
+  },
+  async requestPasswordReset(email: string): Promise<AuthActionResult> {
+    return actionResult(await request('/api/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim() }),
+    }), 'If the account is eligible, password reset instructions are available.')
+  },
+  async resetPassword(input: { token: string; newPassword: string }): Promise<AuthActionResult> {
+    const result = actionResult(await request('/api/auth/password-reset/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ token: input.token.trim(), newPassword: input.newPassword }),
+    }), 'Password reset successful. Sign in with your new password.')
+    if (result.session) {
+      setDevIdentity(null)
+      setSession(result.session)
+    } else {
+      // Password reset revokes existing bearer sessions on the backend. Do not
+      // leave an expired token in localStorage or keep the user apparently signed in.
+      setSession(null)
+      setDevIdentity(null)
+    }
+    return result
+  },
+  async requestEmailVerification(email: string): Promise<AuthActionResult> {
+    return actionResult(await request('/api/auth/verification/resend', {
+      method: 'POST',
+      headers: currentHeaders(),
+      body: JSON.stringify({ email: email.trim() }),
+    }), 'If the account is eligible, verification instructions are available.')
+  },
+  async verifyEmail(token: string): Promise<AuthActionResult> {
+    const result = actionResult(await request('/api/auth/verify-email', {
+      method: 'POST',
+      headers: currentHeaders(),
+      body: JSON.stringify({ token: token.trim() }),
+    }), 'Email verified successfully.')
+    if (result.session) {
+      setDevIdentity(null)
+      setSession(result.session)
+    }
+    return result
   },
   async login(input: { email: string; password: string }) {
     const session = mapSession(await request('/api/auth/login', {

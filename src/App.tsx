@@ -8,6 +8,7 @@ import SellerView from './SellerView'
 import AdminView from './AdminView'
 import OrdersView from './OrdersView'
 import LoginView from './LoginView'
+import VerifyEmailView from './VerifyEmailView'
 import SupportView from './SupportView'
 import AuthControls from './AuthControls'
 import { authApi, type DevIdentity } from './services/authApi'
@@ -307,7 +308,8 @@ function App() {
   const [authError, setAuthError] = useState<string | null>(null)
 
   function getRoute() {
-    return window.location.hash === '#seller' ? 'seller' : window.location.hash === '#admin' ? 'admin' : window.location.hash === '#orders' ? 'orders' : window.location.hash === '#support' ? 'support' : window.location.hash === '#login' ? 'login' : 'storefront'
+    const hash = window.location.hash.split('?')[0]
+    return hash === '#seller' ? 'seller' : hash === '#admin' ? 'admin' : hash === '#orders' ? 'orders' : hash === '#support' ? 'support' : hash === '#login' ? 'login' : hash === '#verify-email' ? 'verify-email' : 'storefront'
   }
 
   useEffect(() => {
@@ -329,6 +331,7 @@ function App() {
   }, [])
 
   if (route === 'login') return <LoginView onLogin={(nextIdentity) => { setAuthError(null); setIdentity(nextIdentity) }} />
+  if (route === 'verify-email') return <VerifyEmailView onLogin={(nextIdentity) => { setAuthError(null); setIdentity(nextIdentity) }} />
   if (route === 'seller') return identity?.role === 'seller' ? <SellerView /> : <Storefront identity={identity} />
   if (route === 'admin') return identity?.role === 'admin' ? <AdminView /> : <Storefront identity={identity} />
   if (route === 'support') return identity?.role === 'buyer' || identity?.role === 'support' || identity?.role === 'admin' ? <SupportView /> : <Storefront identity={identity} />
