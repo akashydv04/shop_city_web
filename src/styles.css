@@ -33,6 +33,10 @@
   cursor: pointer;
 }
 
+.notification-bell { position: relative; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; color: var(--ink); background: transparent; text-decoration: none; }
+.notification-bell:hover, .notification-bell:focus-visible { border-color: var(--green); color: var(--green); background: #f2f7ed; }
+.notification-bell b { position: absolute; top: -4px; right: -5px; min-width: 18px; padding: 2px 4px; border: 2px solid var(--paper); border-radius: 10px; color: white; background: #b35f4d; font: 500 9px var(--mono); text-align: center; }
+
 .drawer-actions { display: flex; gap: 7px; }
 .quantity button:disabled, .icon-button:disabled { cursor: wait; opacity: .55; }
 .checkout-disabled, .checkout-preview-button { width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 7px; font-weight: 600; }
@@ -62,6 +66,35 @@
 .drawer-state .retry-button { margin-top: 8px; }
 .cart-inline-error { margin: 12px 0 0; padding: 9px 11px; border-radius: 7px; color: #8c493a; background: #fff0eb; font-size: 11px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* In-app notification center */
+.notifications-shell { min-height: 100vh; background: #f0efe7; color: var(--ink); }
+.notifications-main { padding-bottom: 90px; }
+.notifications-intro { padding-bottom: 28px; }
+.notifications-intro h1 { max-width: 650px; }
+.notifications-safety-note { display: flex; align-items: center; gap: 9px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #d9e2d2; border-radius: 9px; color: #5e7165; background: #f4f8f0; font-size: 11px; line-height: 1.45; }
+.notifications-safety-note svg { flex: 0 0 auto; color: var(--green); }
+.notifications-card { margin-top: 0; }
+.notifications-card .seller-card-heading { align-items: center; }
+.notifications-card .seller-card-heading .seller-secondary-button { white-space: nowrap; }
+.notification-list { display: grid; gap: 10px; }
+.notification-item { position: relative; display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid #e2e6de; border-radius: 9px; background: #fcfcfa; }
+.notification-unread { border-color: #cbdcc3; background: #f8fbf5; }
+.notification-icon { display: grid; place-items: center; flex: 0 0 37px; width: 37px; height: 37px; border-radius: 8px; color: var(--green); background: #e5efd9; }
+.notification-copy { min-width: 0; flex: 1; }
+.notification-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
+.notification-heading h3 { margin: 0; color: var(--ink); font: 600 16px 'Playfair Display', serif; }
+.notification-heading time { color: #96a199; font: 10px var(--mono); white-space: nowrap; }
+.notification-copy p { margin: 7px 0 7px; color: #66776d; font-size: 12px; line-height: 1.5; }
+.notification-context { color: #8c9891; font: 10px var(--mono); }
+.notification-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+.notification-read-button, .notification-link-button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0; color: var(--green); background: transparent; font-size: 11px; font-weight: 600; }
+.notification-read-button:disabled { cursor: default; opacity: .55; }
+.notification-link-button { padding-left: 9px; border-left: 1px solid #dce2d8; }
+.notification-unread-dot { width: 8px; height: 8px; flex: 0 0 auto; margin-top: 6px; border-radius: 50%; background: #6e985b; }
+.notifications-empty { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 240px; color: #6b8a60; text-align: center; }
+.notifications-empty h2 { margin: 3px 0 0; color: var(--ink); font: 600 21px 'Playfair Display', serif; }
+.notifications-empty p { max-width: 450px; margin: 0; color: #738078; font-size: 12px; line-height: 1.55; }
 
 /* Seller studio */
 .seller-nav-link { padding: 8px 11px; border: 1px solid #cbdac7; border-radius: 18px; color: var(--green); background: #eef5e8; font-size: 11px; font-weight: 600; text-decoration: none; white-space: nowrap; }
@@ -223,6 +256,12 @@
   .seller-slot-row .seller-secondary-button { width: 100%; }
   .seller-editor-actions { justify-content: stretch; }
   .seller-editor-actions button { flex: 1; }
+}
+
+@media (max-width: 560px) {
+  .notifications-card .seller-card-heading { align-items: flex-start; flex-direction: column; }
+  .notification-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .notification-link-button { padding-left: 0; border-left: 0; }
 }
 
 /* Development admin console */

@@ -3,6 +3,7 @@ import { ArrowLeft, CheckCircle2, CircleAlert, Clock3, Edit3, Package, RefreshCw
 import { sellerApi, type DeliverySlot, type DeliverySlotInput, type FulfilmentSettings, type OrderStatus, type SellerOrder, type SellerProduct, type SellerProductInput, type SellerProfile, type SellerProfileInput, type SellerReviewStatus, type SellerShop, type SellerShopInput } from './services/sellerApi'
 import { authApi } from './services/authApi'
 import AuthControls from './AuthControls'
+import NotificationBell from './NotificationBell'
 
 const statusCopy: Record<SellerReviewStatus, string> = {
   PENDING: 'Pending review',
@@ -214,7 +215,7 @@ export default function SellerView() {
   return <div className="seller-shell">
      <header className="seller-topbar">
       <a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a>
-       <div className="seller-topbar-actions"><span className="seller-dev-label">LOCAL SELLER STUDIO</span><button className="seller-refresh" onClick={() => { void loadSellerData(true); void loadOrders(true) }} disabled={!sellerApi.isAvailable() || refreshing || ordersRefreshing} aria-label="Refresh seller data">{refreshing || ordersRefreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
+        <div className="seller-topbar-actions"><span className="seller-dev-label">LOCAL SELLER STUDIO</span><NotificationBell /><button className="seller-refresh" onClick={() => { void loadSellerData(true); void loadOrders(true) }} disabled={!sellerApi.isAvailable() || refreshing || ordersRefreshing} aria-label="Refresh seller data">{refreshing || ordersRefreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
     </header>
     <main className="seller-main">
       <a className="back-link" href="#top"><ArrowLeft size={16} /> Back to storefront</a>

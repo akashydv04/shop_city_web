@@ -4,6 +4,7 @@ import { orderApi } from './services/orderApi'
 import type { OrderStatus, SellerOrder } from './services/sellerApi'
 import { authApi } from './services/authApi'
 import AuthControls from './AuthControls'
+import NotificationBell from './NotificationBell'
 
 const statusCopy: Record<OrderStatus, string> = {
   PENDING: 'Placed',
@@ -82,7 +83,7 @@ export default function OrdersView() {
   return <div className="orders-shell">
     <header className="seller-topbar">
       <a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a>
-       <div className="seller-topbar-actions"><span className="seller-dev-label">CUSTOMER ORDERS</span><a className="seller-nav-link" href="#top">Browse shops</a><button className="seller-refresh" onClick={() => void loadOrders(true)} disabled={!orderApi.isAvailable() || refreshing} aria-label="Refresh orders">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
+       <div className="seller-topbar-actions"><span className="seller-dev-label">CUSTOMER ORDERS</span><a className="seller-nav-link" href="#top">Browse shops</a><NotificationBell /><button className="seller-refresh" onClick={() => void loadOrders(true)} disabled={!orderApi.isAvailable() || refreshing} aria-label="Refresh orders">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
     </header>
     <main className="seller-main orders-main">
       <a className="back-link" href="#top"><ArrowLeft size={16} /> Back to storefront</a>

@@ -108,6 +108,17 @@ Support operators and admins can open `/#support` to use the queue. The adapter 
 
 The customer and operator views show loading, error, and empty states and keep the backend response as the displayed state. The workflow explicitly does not automatically perform refunds or any other financial decision. Without a valid account session, these views fail closed.
 
+### In-app notifications
+
+Signed-in buyer, seller, support, and admin accounts can open **Notifications** from the bell in the shared navigation or `/#notifications`. `src/services/notificationsApi.ts` uses the existing bearer session adapter (and the explicit seeded `X-User-Id` fallback only in `dev`) for these protected routes:
+
+- `GET /api/notifications` — load the current user's notifications.
+- `GET /api/notifications/unread-count` — load the bell badge count.
+- `POST /api/notifications/{id}/read` — mark one notification read.
+- `POST /api/notifications/read-all` — mark all notifications read.
+
+The center provides loading, error, empty, retry, mark-read, mark-all-read, and role-aware in-app links to orders, support, seller, or admin workspaces where the related context is safe. It refreshes after navigation and on a modest 60-second interval; it does not fabricate notifications when the API, session, or endpoint is unavailable. Email and SMS delivery are not connected.
+
 Other available commands:
 
 ```bash
@@ -151,5 +162,7 @@ npm run preview        # Serve the prod-mode build locally
 - `src/AdminView.tsx` — hash-routed admin queue and decision surface
 - `src/services/supportApi.ts` — bearer-authenticated customer case and support queue/status adapter
 - `src/SupportView.tsx` — customer case form/history and support/admin queue/status surface
+- `src/services/notificationsApi.ts` — bearer-authenticated in-app notification adapter and safe related-context links
+- `src/NotificationBell.tsx` and `src/NotificationsView.tsx` — shared navigation badge and hash-routed notification center
 - `src/App.tsx` — storefront shell and interactions
 - `src/styles.css` — responsive visual system

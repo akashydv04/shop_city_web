@@ -4,6 +4,7 @@ import { adminApi, type AdminShop } from './services/adminApi'
 import type { SellerReviewStatus } from './services/sellerApi'
 import { authApi } from './services/authApi'
 import AuthControls from './AuthControls'
+import NotificationBell from './NotificationBell'
 
 const statusCopy: Record<SellerReviewStatus, string> = {
   PENDING: 'Pending review',
@@ -82,7 +83,7 @@ export default function AdminView() {
   return <div className="admin-shell">
     <header className="seller-topbar">
       <a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a>
-       <div className="seller-topbar-actions"><span className="seller-dev-label">LOCAL ADMIN CONSOLE</span><button className="seller-refresh" onClick={() => void loadQueue(true)} disabled={!adminApi.isAvailable() || refreshing} aria-label="Refresh pending shops">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
+       <div className="seller-topbar-actions"><span className="seller-dev-label">LOCAL ADMIN CONSOLE</span><NotificationBell /><button className="seller-refresh" onClick={() => void loadQueue(true)} disabled={!adminApi.isAvailable() || refreshing} aria-label="Refresh pending shops">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={authApi.getIdentity()} /></div>
     </header>
     <main className="seller-main admin-main">
       <a className="back-link" href="#top"><ArrowLeft size={16} /> Back to storefront</a>

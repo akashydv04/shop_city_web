@@ -12,6 +12,8 @@ import VerifyEmailView from './VerifyEmailView'
 import SupportView from './SupportView'
 import AuthControls from './AuthControls'
 import { authApi, type DevIdentity } from './services/authApi'
+import NotificationBell from './NotificationBell'
+import NotificationsView from './NotificationsView'
 
 const categories: { label: Category; icon: string }[] = [
   { label: 'All', icon: '✦' }, { label: 'Fresh', icon: '🥬' }, { label: 'Grocery', icon: '🛒' }, { label: 'Tiffin', icon: '🍱' }, { label: 'Home', icon: '🏠' }, { label: 'Services', icon: '🛠️' },
@@ -201,7 +203,7 @@ function Storefront({ identity }: { identity: DevIdentity | null }) {
        <header className="topbar">
         <a className="brand" href="#top" aria-label="DukaanSetu home"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a>
         <div className="location"><MapPin size={17} strokeWidth={2.5} /><div><span className="eyebrow">DELIVERING TO</span><strong>Gurugram, Haryana</strong></div><ChevronDown size={15} /></div>
-         <div className="top-actions">{identity?.role === 'buyer' && <><a className="orders-nav-link" href="#orders">Orders</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'seller' && <a className="seller-nav-link" href="#seller">Seller studio</a>}{identity?.role === 'admin' && <><a className="admin-nav-link" href="#admin">Admin</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'support' && <a className="support-nav-link" href="#support">Support</a>}<button className="icon-button" aria-label="Saved shops"><Heart size={19} /></button><button className="cart-button" onClick={openCart}><ShoppingBag size={18} /><span>Cart</span>{cartCount > 0 && <b>{cartCount}</b>}</button><AuthControls identity={identity} /></div>
+          <div className="top-actions">{identity?.role === 'buyer' && <><a className="orders-nav-link" href="#orders">Orders</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'seller' && <a className="seller-nav-link" href="#seller">Seller studio</a>}{identity?.role === 'admin' && <><a className="admin-nav-link" href="#admin">Admin</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'support' && <a className="support-nav-link" href="#support">Support</a>}<NotificationBell /><button className="icon-button" aria-label="Saved shops"><Heart size={19} /></button><button className="cart-button" onClick={openCart}><ShoppingBag size={18} /><span>Cart</span>{cartCount > 0 && <b>{cartCount}</b>}</button><AuthControls identity={identity} /></div>
       </header>
 
       <main id="top">
@@ -309,7 +311,7 @@ function App() {
 
   function getRoute() {
     const hash = window.location.hash.split('?')[0]
-    return hash === '#seller' ? 'seller' : hash === '#admin' ? 'admin' : hash === '#orders' ? 'orders' : hash === '#support' ? 'support' : hash === '#login' ? 'login' : hash === '#verify-email' ? 'verify-email' : 'storefront'
+    return hash === '#seller' ? 'seller' : hash === '#admin' ? 'admin' : hash === '#orders' ? 'orders' : hash === '#support' ? 'support' : hash === '#notifications' ? 'notifications' : hash === '#login' ? 'login' : hash === '#verify-email' ? 'verify-email' : 'storefront'
   }
 
   useEffect(() => {
@@ -336,6 +338,7 @@ function App() {
   if (route === 'admin') return identity?.role === 'admin' ? <AdminView /> : <Storefront identity={identity} />
   if (route === 'support') return identity?.role === 'buyer' || identity?.role === 'support' || identity?.role === 'admin' ? <SupportView /> : <Storefront identity={identity} />
   if (route === 'orders') return identity?.role === 'buyer' ? <OrdersView /> : <Storefront identity={identity} />
+  if (route === 'notifications') return <NotificationsView />
   return <><Storefront identity={identity} />{authError && <div className="app-auth-error" role="alert"><strong>Authentication error</strong><span>{authError}</span></div>}</>
 }
 

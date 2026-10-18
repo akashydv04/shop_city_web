@@ -5,6 +5,7 @@ import { authApi } from './services/authApi'
 import { orderApi } from './services/orderApi'
 import type { SellerOrder } from './services/sellerApi'
 import { customerSupportApi, supportApi, type CreateSupportCaseInput, type SupportCase, type SupportCaseStatus } from './services/supportApi'
+import NotificationBell from './NotificationBell'
 
 const reasonOptions = [
   { value: 'ORDER_NOT_RECEIVED', label: 'Order not received' },
@@ -123,7 +124,7 @@ function SupportQueueView() {
   useEffect(() => { void loadQueue() }, [])
 
   return <div className="support-shell support-workspace-shell">
-    <header className="seller-topbar"><a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="seller-topbar-actions"><span className="seller-dev-label">SUPPORT WORKSPACE</span><button className="seller-refresh" onClick={() => void loadQueue(true)} disabled={!supportApi.isAvailable() || refreshing} aria-label="Refresh support queue">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={identity} /></div></header>
+     <header className="seller-topbar"><a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="seller-topbar-actions"><span className="seller-dev-label">SUPPORT WORKSPACE</span><NotificationBell /><button className="seller-refresh" onClick={() => void loadQueue(true)} disabled={!supportApi.isAvailable() || refreshing} aria-label="Refresh support queue">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={identity} /></div></header>
     <main className="seller-main support-main">
       <a className="back-link" href="#top"><ArrowLeft size={16} /> Back to storefront</a>
       <section className="seller-intro support-intro"><div><span className="overline">CASE OPERATIONS</span><h1>Help customers get unstuck.</h1><p>Review customer cases, keep the status current, and leave a clear resolution note for the next person who opens the case.</p></div><div className="seller-identity"><span className="eyebrow">SIGNED-IN OPERATOR</span><strong>{identity?.displayName || identity?.id || 'Not signed in'}</strong><small>{identity?.role === 'admin' ? 'Admin queue access' : 'Support queue access'}</small></div></section>
@@ -232,7 +233,7 @@ function CustomerSupportView() {
   const orderLabel = useMemo(() => new Map(orders.map((order) => [order.id, `Order #${shortId(order.id)}`])), [orders])
 
   return <div className="support-shell support-workspace-shell">
-    <header className="seller-topbar"><a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="seller-topbar-actions"><span className="seller-dev-label">CUSTOMER SUPPORT</span><button className="seller-refresh" onClick={() => { void loadCases(true); void loadOrders() }} disabled={!customerSupportApi.isAvailable() || refreshing} aria-label="Refresh support cases">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={identity} /></div></header>
+     <header className="seller-topbar"><a className="brand" href="#top" aria-label="Back to DukaanSetu storefront"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="seller-topbar-actions"><span className="seller-dev-label">CUSTOMER SUPPORT</span><NotificationBell /><button className="seller-refresh" onClick={() => { void loadCases(true); void loadOrders() }} disabled={!customerSupportApi.isAvailable() || refreshing} aria-label="Refresh support cases">{refreshing ? <span className="loader seller-loader" /> : <RefreshCw size={16} />}<span>Refresh</span></button><AuthControls identity={identity} /></div></header>
     <main className="seller-main support-main">
       <a className="back-link" href="#top"><ArrowLeft size={16} /> Back to storefront</a>
       <section className="seller-intro support-intro"><div><span className="overline">CUSTOMER SUPPORT</span><h1>Tell us what went wrong.</h1><p>Open a case about one of your orders and keep an eye on its status as the support team reviews it.</p></div><div className="seller-identity"><span className="eyebrow">SIGNED-IN BUYER</span><strong>{identity?.displayName || identity?.id || 'Not signed in'}</strong><small>Development identity</small></div></section>
