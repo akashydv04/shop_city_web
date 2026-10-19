@@ -65,7 +65,9 @@ function toNumber(value: number | string | null | undefined, fallback = 0) {
 }
 
 function mapApiCatalog(payload: unknown): Catalog {
-  const shopsPayload = Array.isArray(payload) ? payload : (payload as { shops?: unknown } | null)?.shops
+  const root = payload && typeof payload === 'object' ? payload as { shops?: unknown; data?: unknown } : null
+  const nested = root?.data && typeof root.data === 'object' ? root.data as { shops?: unknown } : null
+  const shopsPayload = Array.isArray(payload) ? payload : root?.shops ?? nested?.shops
   if (!Array.isArray(shopsPayload)) throw new Error('Catalogue response did not contain shops')
 
   const shops: Shop[] = []
