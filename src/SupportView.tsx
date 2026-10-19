@@ -71,7 +71,7 @@ function SupportQueueView() {
   const [refundError, setRefundError] = useState<string | null>(null)
   const [refundDetailError, setRefundDetailError] = useState<string | null>(null)
   const [refundSaving, setRefundSaving] = useState(false)
-  const [refundStatus, setRefundStatus] = useState<RefundRequestStatus>('IN_REVIEW')
+  const [refundStatus, setRefundStatus] = useState<RefundRequestStatus>('UNDER_REVIEW')
   const [refundDecisionNote, setRefundDecisionNote] = useState('')
   const [refundActionError, setRefundActionError] = useState<string | null>(null)
 
@@ -168,7 +168,7 @@ function SupportQueueView() {
     try {
       const nextDetail = await refundApi.getForReview(refundId)
       setRefundDetail(nextDetail)
-      setRefundStatus(nextDetail.status === 'REQUESTED' ? 'IN_REVIEW' : nextDetail.status)
+       setRefundStatus(nextDetail.status === 'REQUESTED' ? 'UNDER_REVIEW' : nextDetail.status)
       setRefundDecisionNote(nextDetail.decisionNote ?? '')
     } catch (reason: unknown) {
       setRefundDetail(null)

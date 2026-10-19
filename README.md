@@ -150,7 +150,7 @@ In `dev` only, a buyer can open an order detail from `/#orders` and submit a ful
 
 - `POST /api/orders/{orderId}/refund-requests` with `{ "amount": 125.00, "reason": "..." }` — create a buyer-owned full or partial request. The full/partial choice is represented by the requested amount; the order total is used for a full request.
 - `GET /api/refunds` and `GET /api/orders/{orderId}/refunds` — read the signed-in buyer's requests.
-- `GET /api/refunds?status=REQUESTED` — load the Support/Admin review queue.
+- `GET /api/refunds?status=REQUESTED` and `GET /api/refunds?status=UNDER_REVIEW` — load the Support/Admin review queue. The web adapter merges both backend statuses; there is no `/api/refunds/queue` route.
 - `PATCH /api/refunds/{requestId}/decision` with `{ "decision": "APPROVED|REJECTED", "note": "..." }` — record an explicitly confirmed authorized-human decision.
 - `POST /api/refunds/{requestId}/sandbox-complete` — explicitly complete an approved refund through the local sandbox only.
 

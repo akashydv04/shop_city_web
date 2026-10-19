@@ -1,7 +1,7 @@
 import { appConfig } from '../config/environment'
 import { authApi } from './authApi'
 
-export type RefundRequestStatus = 'REQUESTED' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'PROCESSING' | 'COMPLETED'
+export type RefundRequestStatus = 'REQUESTED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
 export type RefundDecision = 'APPROVE' | 'REJECT'
 
 export interface RefundRequestHistoryEntry {
@@ -64,7 +64,8 @@ function numberValue(value: unknown, fallback = 0) {
 
 function statusValue(value: unknown): RefundRequestStatus {
   const status = stringValue(value, 'REQUESTED').toUpperCase().replace(/[-\s]/g, '_')
-  if (status === 'IN_REVIEW' || status === 'APPROVED' || status === 'REJECTED' || status === 'CANCELLED' || status === 'PROCESSING' || status === 'COMPLETED') return status
+  if (status === 'IN_REVIEW') return 'UNDER_REVIEW'
+  if (status === 'UNDER_REVIEW' || status === 'APPROVED' || status === 'REJECTED' || status === 'PROCESSING' || status === 'COMPLETED' || status === 'FAILED') return status
   return 'REQUESTED'
 }
 
@@ -78,14 +79,14 @@ function refundPayload(payload: unknown): Record<string, unknown> {
 function mapHistory(value: unknown): RefundRequestHistoryEntry[] {
   if (!Array.isArray(value)) return []
   return value.map((entry) => {
-    const raw = objectValue(entry)
+      const raw = objectValue(entry)
     const note = stringValue(raw.note ?? raw.decisionNote ?? raw.decision_note ?? raw.reason)
     const actor = objectValue(raw.actor ?? raw.user ?? raw.operator)
     return {
-      status: statusValue(raw.status ?? raw.state),
+      status: statusValue(raw.status ?? raw.state ?? raw.toStatus ?? raw.to_status),
       ...(note ? { note } : {}),
       ...(stringValue(raw.actorName ?? raw.actor_name ?? actor.displayName ?? actor.name) ? { actorName: stringValue(raw.actorName ?? raw.actor_name ?? actor.displayName ?? actor.name) } : {}),
-      ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp) } : {}),
+       ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp) } : {}),
     }
   })
 }
@@ -100,17 +101,17 @@ export function mapRefundRequest(payload: unknown): RefundRequest {
     buyerId: stringValue(raw.buyerId ?? raw.buyer_id ?? raw.customerId ?? raw.customer_id ?? buyer.id),
     ...(stringValue(raw.buyerName ?? raw.buyer_name ?? buyer.displayName ?? buyer.name) ? { buyerName: stringValue(raw.buyerName ?? raw.buyer_name ?? buyer.displayName ?? buyer.name) } : {}),
     ...(stringValue(raw.buyerEmail ?? raw.buyer_email ?? buyer.email) ? { buyerEmail: stringValue(raw.buyerEmail ?? raw.buyer_email ?? buyer.email) } : {}),
-    requestedAmount,
+     requestedAmount,
     ...(raw.approvedAmount !== undefined || raw.approved_amount !== undefined ? { approvedAmount: numberValue(raw.approvedAmount ?? raw.approved_amount) } : {}),
     currency: stringValue(raw.currency ?? raw.currencyCode ?? raw.currency_code, 'INR').toUpperCase(),
     reason: stringValue(raw.reason ?? raw.reasonCode ?? raw.reason_code ?? raw.description, 'No reason provided.'),
     status: statusValue(raw.status ?? raw.refundStatus ?? raw.refund_status ?? raw.state),
     ...(stringValue(raw.decisionNote ?? raw.decision_note ?? raw.note) ? { decisionNote: stringValue(raw.decisionNote ?? raw.decision_note ?? raw.note) } : {}),
-    ...(stringValue(raw.createdAt ?? raw.created_at) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at) } : {}),
-    ...(stringValue(raw.updatedAt ?? raw.updated_at) ? { updatedAt: stringValue(raw.updatedAt ?? raw.updated_at) } : {}),
+     ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
+     ...(stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) ? { updatedAt: stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
     financialActionRequired: raw.financialActionRequired === true || raw.financial_action_required === true,
     automaticMoneyMovement: raw.automaticMoneyMovement === true || raw.automatic_money_movement === true,
-    history: mapHistory(raw.history ?? raw.auditHistory ?? raw.audit_history ?? raw.statusHistory ?? raw.status_history),
+     history: mapHistory(raw.history ?? raw.auditHistory ?? raw.audit_history ?? raw.statusHistory ?? raw.status_history),
   }
 }
 
@@ -173,19 +174,28 @@ export const refundApi = {
     return listPayload(await request('/api/refunds', {}, 'customer'))
   },
   async getMine(id: string) {
-    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}`, {}, 'customer'))
+    const found = (await this.listMine()).find((item) => item.id === id)
+    if (!found) throw new RefundApiError('Refund request was not found in your account history.', 404)
+    return found
   },
   async listQueue() {
-    return listPayload(await request('/api/refunds/queue?status=REQUESTED,IN_REVIEW', {}, 'reviewer'))
+    const [requested, underReview] = await Promise.all([
+      request('/api/refunds?status=REQUESTED', {}, 'reviewer'),
+      request('/api/refunds?status=UNDER_REVIEW', {}, 'reviewer'),
+    ])
+    const byId = new Map([...listPayload(requested), ...listPayload(underReview)].map((item) => [item.id, item]))
+    return [...byId.values()]
   },
   async getForReview(id: string) {
-    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}`, {}, 'reviewer'))
+    const found = (await this.listQueue()).find((item) => item.id === id)
+    if (!found) throw new RefundApiError('Refund request was not found in the review queue.', 404)
+    return found
   },
-  async updateStatus(id: string, input: UpdateRefundStatusInput) {
-    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify(input) }, 'reviewer'))
+  async updateStatus(_id: string, _input: UpdateRefundStatusInput): Promise<RefundRequest> {
+    throw new RefundApiError('Refund workflow status is controlled by the backend decision endpoint. Use Approve or Reject with a note.')
   },
   async decide(id: string, decision: RefundDecision, decisionNote: string) {
     if (!decisionNote.trim()) throw new RefundApiError('A decision note is required before approving or rejecting a refund request.')
-    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision, decisionNote: decisionNote.trim() }) }, 'reviewer'))
+    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}/decision`, { method: 'PATCH', body: JSON.stringify({ decision: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED', note: decisionNote.trim() }) }, 'reviewer'))
   },
 }
