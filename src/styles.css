@@ -276,6 +276,19 @@
 .seller-insight-stock strong { color: #8a6320; font-size: 15px; }
 .seller-insight-stock span { color: #8a6320; font: 500 9px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
 .seller-insight-stock.critical strong, .seller-insight-stock.critical span { color: #954c40; }
+.product-view-button { display: block; width: 100%; padding: 0; border: 0; color: var(--ink); background: transparent; text-align: left; font: 600 16px 'Playfair Display', serif; }
+.product-view-button:hover, .product-view-button:focus-visible { color: var(--green); }
+.product-actions { display: flex; align-items: center; gap: 8px; }
+.product-see-button { padding: 7px 9px; border: 1px solid #d7ded4; border-radius: 6px; color: #5f7066; background: #fff; font-size: 11px; font-weight: 600; }
+.product-see-button:hover, .product-see-button:focus-visible { border-color: var(--green); color: var(--green); background: #f4f8ef; }
+.product-details-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(17,35,27,.38); }
+.product-details { position: relative; width: min(430px, 100%); padding: 32px; border-radius: 14px; background: var(--paper); box-shadow: 0 20px 60px rgba(20,40,30,.2); }
+.product-details-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 50%; color: var(--green); background: white; }
+.product-details-emoji { display: grid; place-items: center; width: 80px; height: 80px; margin-bottom: 20px; border-radius: 12px; background: #e5ecd8; font-size: 42px; }
+.product-details h2 { margin: 7px 0 8px; color: var(--ink); font: 600 30px 'Playfair Display', serif; }
+.product-details p { margin: 0 0 20px; color: #738078; line-height: 1.55; }
+.product-details-price { display: block; margin-bottom: 20px; color: var(--ink); font-size: 18px; }
+.product-details-add { display: inline-flex; align-items: center; gap: 7px; }
 .seller-add-product-card { margin-top: 16px; }
 .seller-add-product-form { margin-top: 3px; }
 .seller-product-editor { padding-top: 4px; }

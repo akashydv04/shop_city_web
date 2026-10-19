@@ -60,7 +60,7 @@ cp .env.dev.example .env.dev.local
 npm run dev
 ```
 
-With `VITE_API_BASE_URL` set, the app makes `GET /api/shops?city=Gurugram` and maps each shop's nested products into the storefront types. After a buyer signs in, the cart drawer reads `GET /api/carts/current`, adds through `POST /api/carts/items`, updates or deletes `/api/carts/current/items/{productId}`, and requests `POST /api/carts/current/checkout-preview` with the bearer session. Cart mutations are read back from the server. The backend should be reachable from the browser (including CORS configuration where applicable). If a request fails, the UI keeps its error state and retry action; it does not silently fall back to demo data.
+With `VITE_API_BASE_URL` set, the app makes `GET /api/shops?city=Gurugram` and maps each shop's nested products into the storefront types. Every returned product has a **See** action that opens its detail panel. After a buyer signs in, the cart drawer reads `GET /api/carts/current`, adds through `POST /api/carts/items`, updates or deletes `/api/carts/current/items/{productId}`, and requests `POST /api/carts/current/checkout-preview` with the bearer session. The add endpoint returns the persisted cart snapshot, so the header count updates from the server response. When a live API buyer is not signed in, Add/Sign in sends the user to the login screen instead of silently doing nothing. The backend should be reachable from the browser (including CORS configuration where applicable). If a request fails, the UI keeps its error state and retry action; it does not silently fall back to demo data.
 
 ### Local sandbox payment (dev only)
 
