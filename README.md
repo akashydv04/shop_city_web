@@ -13,6 +13,25 @@ cp .env.dev.example .env.dev.local
 # edit VITE_API_BASE_URL when a reachable catalogue service is available
 ```
 
+For two separate, reproducible local storefront URLs, use the dedicated demo and API modes:
+
+```bash
+# Terminal 1 — dummy/demo data at http://localhost:5173
+npm run dev:demo
+
+# Terminal 2 — backend/database data at http://localhost:5174
+npm run dev:api
+```
+
+The commands load `.env.demo` and `.env.api` respectively. To customize either mode without changing tracked files, copy the matching example to a local override:
+
+```bash
+cp .env.demo.example .env.demo.local
+cp .env.api.example .env.api.local
+```
+
+The demo mode has no API URL and permits the sample catalogue. The API mode points to `http://localhost:8080`, disables fallback, and fails closed when the backend is unavailable. Both modes keep `VITE_APP_ENV=dev`, so development-only seeded login and local payment/refund sandbox behavior remain clearly labelled.
+
 For the running local stack, the backend is available at `http://localhost:8080` and the web app can be started with:
 
 ```bash

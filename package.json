@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --mode dev",
+    "dev:demo": "vite --mode demo --host 0.0.0.0 --port 5173 --strictPort",
+    "dev:api": "vite --mode api --host 0.0.0.0 --port 5174 --strictPort",
     "dev:uat": "vite --mode uat",
     "dev:preprod": "vite --mode preprod",
     "dev:prod": "vite --mode prod",
