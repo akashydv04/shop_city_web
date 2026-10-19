@@ -177,6 +177,65 @@
 .seller-unavailable { max-width: 700px; min-height: 330px; margin: 22px auto; padding: 45px 28px; border: 1px solid #e5dfcf; border-radius: 12px; background: #fffdf5; color: #9a7841; }
 .seller-unavailable h2 { color: #4d493a; }
 .seller-unavailable code { padding: 2px 4px; border-radius: 3px; color: #6e5b34; background: #f1ead8; font: 10px var(--mono); }
+
+/* Development-only refund request and authorized review workflow */
+.refund-request-panel { display: grid; gap: 12px; margin-top: 23px; padding-top: 22px; border-top: 1px solid #e6e7df; }
+.refund-panel-heading, .refund-review-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.refund-panel-heading h3, .refund-review-heading h2 { margin: 6px 0 0; color: var(--ink); font: 600 21px 'Playfair Display', serif; }
+.refund-panel-heading > svg { color: #8b6b2b; }
+.refund-panel-copy, .refund-review-heading p { margin: 0; color: #718078; font-size: 11px; line-height: 1.5; }
+.refund-form { display: grid; gap: 12px; }
+.refund-form .form-field textarea { min-height: 82px; }
+.refund-kind { display: grid; gap: 8px; }
+.refund-kind label { display: flex; align-items: flex-start; gap: 7px; color: #42544a; font-size: 11px; font-weight: 600; }
+.refund-kind input { margin-top: 1px; accent-color: var(--green); }
+.refund-form .form-field input, .refund-form .form-field textarea, .refund-status-editor select, .refund-status-editor textarea { width: 100%; border: 1px solid #dce1d8; border-radius: 7px; outline: 0; padding: 10px 11px; color: var(--ink); background: #fcfcfa; font-size: 12px; }
+.refund-form .form-field textarea, .refund-status-editor textarea { resize: vertical; line-height: 1.5; }
+.refund-form .form-field input:focus, .refund-form .form-field textarea:focus, .refund-status-editor select:focus, .refund-status-editor textarea:focus { border-color: #7ca06d; box-shadow: 0 0 0 3px rgba(124,160,109,.14); }
+.refund-history-card { margin-top: 16px; }
+.refund-safety-note, .refund-review-safety { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid #e0c887; border-radius: 8px; color: #725c2d; background: #fffaf0; font-size: 10px; line-height: 1.45; }
+.refund-safety-note svg, .refund-review-safety svg { flex: 0 0 auto; color: #8b6b2b; }
+.refund-history-list { display: grid; gap: 9px; margin-top: 14px; }
+.refund-history-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 14px; border: 1px solid #e2e6de; border-radius: 9px; background: #fcfcfa; }
+.refund-history-item > div:first-child { display: grid; gap: 4px; }
+.refund-history-item strong { color: var(--ink); font-size: 12px; }
+.refund-history-item span { color: #8a9890; font: 10px var(--mono); }
+.refund-history-item p { grid-column: 1 / -1; margin: 4px 0 0; color: #66776d; font-size: 11px; line-height: 1.45; }
+.refund-history-item small { grid-column: 1 / -1; color: #65766a; font-size: 10px; line-height: 1.4; }
+.refund-status { display: inline-flex; align-items: center; width: max-content; padding: 5px 8px; border-radius: 13px; font: 500 9px var(--mono); white-space: nowrap; }
+.refund-status-requested, .refund-status-in_review { color: #815d20; background: #fff3d7; }
+.refund-status-approved, .refund-status-completed { color: #39704a; background: #e7f3e0; }
+.refund-status-rejected, .refund-status-cancelled { color: #954c40; background: #ffebe7; }
+.refund-status-processing { color: #536f82; background: #e8f1f5; }
+.refund-history-timeline { display: grid; gap: 5px; grid-column: 1 / -1; margin-top: 4px; padding-top: 9px; border-top: 1px solid #e6e7df; color: #7c8981; font-size: 10px; line-height: 1.45; }
+.refund-review-section { margin-top: 28px; }
+.refund-review-heading { align-items: end; margin-bottom: 17px; }
+.refund-review-heading > div { max-width: 680px; }
+.refund-review-heading h2 { font-size: 30px; }
+.refund-review-heading .seller-refresh { flex: 0 0 auto; }
+.refund-review-layout { display: grid; grid-template-columns: minmax(260px, .78fr) minmax(0, 1.22fr); gap: 16px; align-items: start; }
+.refund-review-list, .refund-review-detail { min-width: 0; }
+.refund-review-list .seller-card-heading { margin-bottom: 13px; }
+.refund-review-list h3, .refund-review-detail h3 { margin: 6px 0 0; color: var(--ink); font: 600 20px 'Playfair Display', serif; }
+.refund-review-row { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 13px 0; border: 0; border-top: 1px solid #e6e7df; color: var(--ink); background: transparent; text-align: left; }
+.refund-review-row:hover, .refund-review-row.selected { color: var(--green); }
+.refund-review-row > div { display: grid; gap: 4px; min-width: 0; }
+.refund-review-row > div:last-child { justify-items: end; }
+.refund-review-row strong { font: 600 12px var(--mono); }
+.refund-review-row span, .refund-review-row small { overflow: hidden; color: #728078; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.refund-review-row b { font-size: 12px; }
+.refund-review-content { display: grid; gap: 15px; }
+.refund-review-content .support-detail-meta { flex-wrap: wrap; }
+.refund-review-safety { margin-top: 2px; }
+.refund-review-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 3px; }
+.refund-review-actions button { min-height: 39px; }
+.refund-reject-button { border: 1px solid #e1b6ac; border-radius: 7px; padding: 11px 14px; color: #954c40; background: #fff8f5; font-size: 12px; font-weight: 600; }
+.refund-reject-button:hover, .refund-reject-button:focus-visible { background: #ffebe7; }
+.refund-reject-button:disabled { cursor: wait; opacity: .6; }
+
+@media (max-width: 800px) {
+  .refund-review-layout { grid-template-columns: 1fr; }
+}
 .seller-catalogue-card { margin-top: 16px; }
 .seller-section-intro { margin: -8px 0 21px; color: #718078; font-size: 12px; line-height: 1.5; }
 .seller-products-error { margin: 0 0 16px; }

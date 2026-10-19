@@ -94,6 +94,9 @@ function safeHashHref(rawType: string, rawId: string, role: AppRole): string | u
   if (type.includes('support') || type.includes('case') || type.includes('ticket')) {
     return role === 'buyer' || role === 'support' || role === 'admin' ? '#support' : undefined
   }
+  if (type.includes('refund')) {
+    return role === 'buyer' ? '#orders' : role === 'support' || role === 'admin' ? '#support' : undefined
+  }
   if (type.includes('seller') || type.includes('product') || type.includes('shop')) {
     if (role === 'seller') return '#seller'
     if (role === 'admin') return '#admin'

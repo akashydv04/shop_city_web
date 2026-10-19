@@ -120,6 +120,20 @@ Support operators and admins can open `/#support` to use the queue. The adapter 
 
 The customer and operator views show loading, error, and empty states and keep the backend response as the displayed state. The workflow explicitly does not automatically perform refunds or any other financial decision. Without a valid account session, these views fail closed.
 
+### Development-only refund requests
+
+In `dev` only, a buyer can open an order detail from `/#orders` and submit a full or partial refund request with a reason. The buyer sees backend-owned status, decision notes, and request history. The UI sends the requested amount to the refund API and never calls a payment provider, fabricates a refund, or moves money automatically.
+
+`src/services/refundApi.ts` uses the bearer session for real accounts and the existing seeded `X-User-Id` fallback only when the app is in `dev` and no bearer session exists:
+
+- `POST /api/orders/{orderId}/refund-requests` with `{ "amount": 125.00, "reason": "..." }` — create a buyer-owned full or partial request. The full/partial choice is represented by the requested amount; the order total is used for a full request.
+- `GET /api/refunds` and `GET /api/refunds/{requestId}` — read the signed-in buyer's requests.
+- `GET /api/refunds/queue?status=REQUESTED,IN_REVIEW` and `GET /api/refunds/{requestId}` — load the Support/Admin review queue and detail.
+- `PATCH /api/refunds/{requestId}/status` with `{ "status": "REQUESTED|IN_REVIEW|CANCELLED|PROCESSING|COMPLETED", "decisionNote": "..." }` — record a non-decision workflow status.
+- `POST /api/refunds/{requestId}/decision` with `{ "decision": "APPROVE|REJECT", "decisionNote": "..." }` — record an explicitly confirmed authorized-human decision.
+
+Support and Admin users review these requests in `/#support`. Approval and rejection require a decision note and browser confirmation. These controls record the operational decision only; they do not claim a live refund, provider integration, payment-status change, or automatic money movement. UAT, preprod, and prod do not render the development refund surfaces.
+
 ### In-app notifications
 
 Signed-in buyer, seller, support, and admin accounts can open **Notifications** from the bell in the shared navigation or `/#notifications`. `src/services/notificationsApi.ts` uses the existing bearer session adapter (and the explicit seeded `X-User-Id` fallback only in `dev`) for these protected routes:
@@ -175,6 +189,9 @@ npm run preview        # Serve the prod-mode build locally
 - `src/AdminView.tsx` — hash-routed admin queue and decision surface
 - `src/services/supportApi.ts` — bearer-authenticated customer case and support queue/status adapter
 - `src/SupportView.tsx` — customer case form/history and support/admin queue/status surface
+- `src/services/refundApi.ts` — dev-only bearer-authenticated refund request/review adapter
+- `src/OrdersView.tsx` — dev-only buyer refund request form and backend-owned refund history
+- `src/SupportView.tsx` — authorized-human support/admin refund queue, status, decision note, and confirmation controls
 - `src/services/notificationsApi.ts` — bearer-authenticated in-app notification adapter and safe related-context links
 - `src/NotificationBell.tsx` and `src/NotificationsView.tsx` — shared navigation badge and hash-routed notification center
 - `src/App.tsx` — storefront shell and interactions
