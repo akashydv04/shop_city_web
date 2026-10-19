@@ -63,11 +63,17 @@ async function request(path: string) {
   return body
 }
 
+export interface CreateOrderInput {
+  shopId: string
+  items: Array<{ productId: string; quantity: number }>
+}
+
 export interface OrderApi {
   isAvailable: typeof isAvailable
   unavailableMessage: typeof unavailableMessage
   listHistory(): Promise<SellerOrder[]>
   getDetail(orderId: string): Promise<SellerOrder>
+  create(input: CreateOrderInput, idempotencyKey: string): Promise<SellerOrder>
 }
 
 export const orderApi: OrderApi = {
@@ -78,5 +84,23 @@ export const orderApi: OrderApi = {
   },
   async getDetail(orderId) {
     return mapOrder(await request(`/api/orders/${encodeURIComponent(orderId)}`))
+  },
+  async create(input, idempotencyKey) {
+    if (!idempotencyKey.trim()) throw new OrderApiError('An idempotency key is required before creating an order.')
+    if (!input.shopId || !input.items.length) throw new OrderApiError('The order needs a shop and at least one item.')
+    if (!isAvailable()) throw new OrderApiError(unavailableMessage())
+    const response = await fetch(`${appConfig.apiBaseUrl}/api/orders`, {
+      method: 'POST',
+      headers: authApi.headers({ Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }),
+      body: JSON.stringify(input),
+    })
+    const body = await readBody(response)
+    if (!response.ok) {
+      const message = typeof body === 'object' && body !== null && 'message' in body
+        ? String((body as { message?: unknown }).message)
+        : `Order request failed (${response.status})`
+      throw new OrderApiError(message, response.status)
+    }
+    return mapOrder(body)
   },
 }

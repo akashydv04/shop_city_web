@@ -1,6 +1,6 @@
 # DukaanSetu web
 
-A focused customer-facing storefront foundation for Gurugram neighbourhood commerce. Checkout is intentionally disabled. When `VITE_API_BASE_URL` is configured, the frontend supports API-backed registration, login, logout, session restore, and role-aware navigation. In `dev` only, a clearly labelled seeded-login fallback remains available for local testing.
+A focused customer-facing storefront foundation for Gurugram neighbourhood commerce. Checkout remains preview-first. When `VITE_API_BASE_URL` is configured, the frontend supports API-backed registration, login, logout, session restore, role-aware navigation, and an explicitly selected local sandbox payment flow in `dev` only. In `dev` only, a clearly labelled seeded-login fallback remains available for local testing.
 
 ## Environment configuration
 
@@ -19,7 +19,7 @@ For the running local stack, the backend is available at `http://localhost:8080`
 VITE_APP_ENV=dev VITE_API_BASE_URL=http://localhost:8080 VITE_ALLOW_DEMO_FALLBACK=false npm run dev -- --host 0.0.0.0 --port 5174
 ```
 
-The UAT, preprod, and prod examples disable demo fallback. With an API URL, all environments use the real account auth routes and bearer tokens; `X-User-Id` is never sent outside `dev`. Without an API URL, protected workspaces remain unavailable and the storefront says why. This app makes no payment or MFA claims.
+The UAT, preprod, and prod examples disable demo fallback. With an API URL, all environments use the real account auth routes and bearer tokens; `X-User-Id` is never sent outside `dev`. Without an API URL, protected workspaces remain unavailable and the storefront says why. No payment secret, provider key, webhook signing secret, or card data is accepted by this frontend. Production payment success is never simulated or claimed.
 
 ## Run locally
 
@@ -42,6 +42,18 @@ npm run dev
 ```
 
 With `VITE_API_BASE_URL` set, the app makes `GET /api/shops?city=Gurugram` and maps each shop's nested products into the storefront types. After a buyer signs in, the cart drawer reads `GET /api/carts/current`, adds through `POST /api/carts/items`, updates or deletes `/api/carts/current/items/{productId}`, and requests `POST /api/carts/current/checkout-preview` with the bearer session. Cart mutations are read back from the server. The backend should be reachable from the browser (including CORS configuration where applicable). If a request fails, the UI keeps its error state and retry action; it does not silently fall back to demo data.
+
+### Local sandbox payment (dev only)
+
+The cart keeps the server-priced checkout preview as the default. A buyer must explicitly tick **I explicitly want to test sandbox payment in dev** before any order or payment request is sent. The control is rendered only when `VITE_APP_ENV=dev`; demo mode without an API and UAT/preprod/prod never expose or call it.
+
+The adapters in `src/services/orderApi.ts` and `src/services/paymentApi.ts` use this backend contract:
+
+- `POST /api/orders` with `Idempotency-Key: <stable checkout key>` and `{ "shopId": "...", "items": [{ "productId": "...", "quantity": 1 }] }` creates or replays the buyer's order.
+- `POST /api/orders/{orderId}/payment-intents` with `Idempotency-Key: <stable payment key>` creates or replays a sandbox payment intent. The backend derives the amount and currency from the order.
+- `GET /api/orders/{orderId}/payment` reads the backend payment state after the provider/webhook contract updates it. The browser never calls a provider webhook and never trusts a client-side success callback.
+
+Real sessions send `Authorization: Bearer <accessToken>`. The existing `authApi.headers()` helper uses the seeded `X-User-Id` fallback only when the app is in `dev` and there is no real bearer session. The payment adapter refuses all non-dev environments and sends no secrets. Pending, succeeded, and failed states are shown from backend responses. Retries reuse both idempotency keys, so a network retry does not intentionally duplicate an order or payment intent. The order link is shown only after a succeeded backend payment state; if the backend confirms payment without returning an order link, the UI honestly directs the buyer to Orders or Support.
 
 ### Seller studio
 
@@ -69,7 +81,7 @@ The catalogue section lists only shops whose backend status is `APPROVED`. It lo
 
 The seller studio also has an order queue. It reads `GET /api/seller/orders`, displays backend order items/totals/statuses, and sends valid transitions to `POST /api/orders/{orderId}/status`. The UI only renders actions permitted by the current status (`PENDING -> CONFIRMED/CANCELLED -> PREPARING -> READY -> COMPLETED`), confirms every action, and refreshes the queue after success. If the configured backend does not expose the seller queue route yet, the studio shows the actual request error; it never creates local or fake orders.
 
-The login screen supports real `buyer` and `seller` registration and login through `POST /api/auth/register` and `POST /api/auth/login`. It stores the returned bearer token and user metadata in browser `localStorage`, verifies the session with `GET /api/auth/me` on startup, and calls `POST /api/auth/logout` before clearing a real session. Password recovery uses `POST /api/auth/password-reset/request` and `POST /api/auth/password-reset/confirm`; email verification is available at `#verify-email` through `POST /api/auth/verification/resend` and `POST /api/auth/verify-email`. Password reset clears the locally stored bearer session unless the backend returns a replacement session, and verification updates it when the backend returns one. The UI states that an email provider is not connected; it does not claim email delivery. In `dev` only, an explicitly returned development verification/reset token may be shown for local testing. Such tokens are never parsed or displayed in UAT, preprod, or prod. The explicit seeded fallback supports `buyer`, `seller`, `support`, and `admin`; only that fallback may send `X-User-Id`. Buyer, seller, order, customer-support, and admin adapters send the bearer token on protected requests and show backend/auth errors honestly. Demo mode (no API URL with dev fallback enabled) keeps the local in-memory cart and shows an explicit preview-only/unavailable fulfilment and checkout state. With a signed-in buyer, the cart reads fulfilment options from `GET /api/carts/current/fulfilment-options`, lets the buyer choose pickup or delivery and an available slot, and sends `{ "fulfilmentMethod": "PICKUP|DELIVERY", "deliverySlotId": "..." }` to `POST /api/carts/current/checkout-preview`. The preview displays server subtotal, delivery fee, total, chosen slot, and `paymentAvailable: false`; it never creates an order or claims payment support.
+The login screen supports real `buyer` and `seller` registration and login through `POST /api/auth/register` and `POST /api/auth/login`. It stores the returned bearer token and user metadata in browser `localStorage`, verifies the session with `GET /api/auth/me` on startup, and calls `POST /api/auth/logout` before clearing a real session. Password recovery uses `POST /api/auth/password-reset/request` and `POST /api/auth/password-reset/confirm`; email verification is available at `#verify-email` through `POST /api/auth/verification/resend` and `POST /api/auth/verify-email`. Password reset clears the locally stored bearer session unless the backend returns a replacement session, and verification updates it when the backend returns one. The UI states that an email provider is not connected; it does not claim email delivery. In `dev` only, an explicitly returned development verification/reset token may be shown for local testing. Such tokens are never parsed or displayed in UAT, preprod, or prod. The explicit seeded fallback supports `buyer`, `seller`, `support`, and `admin`; only that fallback may send `X-User-Id`. Buyer, seller, order, customer-support, and admin adapters send the bearer token on protected requests and show backend/auth errors honestly. Demo mode (no API URL with dev fallback enabled) keeps the local in-memory cart and shows an explicit preview-only/unavailable fulfilment and checkout state. With a signed-in buyer, the cart reads fulfilment options from `GET /api/carts/current/fulfilment-options`, lets the buyer choose pickup or delivery and an available slot, and sends `{ "fulfilmentMethod": "PICKUP|DELIVERY", "deliverySlotId": "..." }` to `POST /api/carts/current/checkout-preview`. The preview displays server subtotal, delivery fee, total, chosen slot, and `paymentAvailable: false`; it does not create an order until the buyer explicitly selects the dev-only sandbox flow described above.
 
 ### Admin console
 
@@ -140,7 +152,7 @@ npm run preview        # Serve the prod-mode build locally
 - Seller order queue with backend-owned status transitions and honest unavailable/error states
 - Customer order history and server-backed order detail at `#orders`
 - Hash-routed admin console with pending-shop queue, seller/shop details, confirmed approve/reject actions, optional rejection reason, and refreshed backend status
-- Honest live checkout-preview state with payment unavailable; no real checkout or payment claim
+- Honest server-priced checkout preview plus explicitly selected dev-only sandbox payment intent state; no real checkout or production payment claim
 - Approved-shop fulfilment settings and capacity-controlled delivery slot management
 - Live buyer pickup/delivery selection and slot-aware server checkout preview
 - Loading, empty, and error states in the browse flow
@@ -157,6 +169,7 @@ npm run preview        # Serve the prod-mode build locally
 - `src/services/sellerApi.ts` — bearer-authenticated seller onboarding, shop, and product catalogue adapter
 - `src/SellerView.tsx` — hash-routed seller onboarding, shop management, and approved-shop catalogue surface
 - `src/services/orderApi.ts` — bearer-authenticated customer order history/detail adapter
+- `src/services/paymentApi.ts` — dev-only sandbox payment-intent adapter with server status polling and idempotent retries
 - `src/OrdersView.tsx` — hash-routed customer order history and server-backed detail surface
 - `src/services/adminApi.ts` — bearer-authenticated pending-shop review adapter
 - `src/AdminView.tsx` — hash-routed admin queue and decision surface
