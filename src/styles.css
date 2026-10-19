@@ -263,6 +263,19 @@
 .seller-product-empty { min-height: 125px; padding: 18px 10px 5px; }
 .seller-product-empty h4 { margin: 3px 0 0; color: var(--ink); font: 600 16px 'Playfair Display', serif; }
 .seller-product-empty p { margin: 0; color: #738078; font-size: 11px; }
+.seller-insights-card { margin-top: 16px; }
+.seller-insight-empty { min-height: 145px; }
+.seller-insight-loading { min-height: 110px; }
+.seller-insight-list { display: grid; gap: 9px; }
+.seller-insight-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; border: 1px solid #e5e8e1; border-radius: 8px; background: #fff; }
+.seller-insight-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: #8a6320; background: #fff2d2; }
+.seller-insight-copy { display: grid; gap: 4px; min-width: 0; }
+.seller-insight-copy strong { overflow: hidden; color: var(--ink); font: 600 14px 'Playfair Display', serif; text-overflow: ellipsis; white-space: nowrap; }
+.seller-insight-copy span { overflow: hidden; color: #7a877f; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.seller-insight-stock { display: grid; justify-items: end; gap: 4px; }
+.seller-insight-stock strong { color: #8a6320; font-size: 15px; }
+.seller-insight-stock span { color: #8a6320; font: 500 9px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.seller-insight-stock.critical strong, .seller-insight-stock.critical span { color: #954c40; }
 .seller-product-editor { padding-top: 4px; }
 .seller-editor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 14px; }
 .seller-editor-heading h4 { margin-top: 6px; }
@@ -327,6 +340,8 @@
   .seller-product-row .seller-edit-button { grid-column: 1 / -1; width: 100%; }
   .seller-product-editor-fields { grid-template-columns: 1fr; }
   .seller-product-editor-fields .form-field-wide { grid-column: auto; }
+  .seller-insight-row { grid-template-columns: auto minmax(0, 1fr); }
+  .seller-insight-stock { grid-column: 2; justify-items: start; }
   .seller-fulfilment-settings { grid-template-columns: 1fr; }
   .fulfilment-fee-field { grid-column: auto; max-width: none; }
   .seller-slot-form { grid-template-columns: 1fr; }

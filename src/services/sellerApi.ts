@@ -226,7 +226,7 @@ function mapProduct(payload: unknown, fallbackShopId = ''): SellerProduct {
     name: stringValue(raw.name, 'Unnamed product'),
     description: stringValue(raw.description ?? raw.detail),
     price: Math.max(0, numberValue(raw.price)),
-    quantity: Math.max(0, Math.floor(numberValue(raw.quantity ?? raw.inventoryQuantity ?? raw.inventory ?? raw.stock))),
+    quantity: Math.max(0, Math.floor(numberValue(raw.quantity ?? raw.availableQuantity ?? raw.inventoryQuantity ?? raw.inventory ?? raw.stock))),
     active: booleanValue(raw.active ?? raw.isActive, true),
   }
 }
