@@ -70,6 +70,13 @@ export interface SellerProductInput {
   active: boolean
 }
 
+export interface SellerProductCreateInput {
+  name: string
+  description: string
+  price: number
+  initialQuantity: number
+}
+
 export interface FulfilmentSettings {
   shopId: string
   deliveryEnabled: boolean
@@ -355,6 +362,12 @@ export const sellerApi = {
             ? nestedData.products
           : []
     return values.map((value) => mapProduct(value, shopId)).filter((product) => product.id)
+  },
+  async createProduct(shopId: string, input: SellerProductCreateInput): Promise<SellerProduct> {
+    return mapProduct(await request(`/api/seller/shops/${encodeURIComponent(shopId)}/products`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }), shopId)
   },
   async updateProduct(shopId: string, productId: string, input: SellerProductInput): Promise<SellerProduct> {
     const payload = await request(`/api/seller/shops/${encodeURIComponent(shopId)}/products/${encodeURIComponent(productId)}`, {

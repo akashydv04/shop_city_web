@@ -276,6 +276,8 @@
 .seller-insight-stock strong { color: #8a6320; font-size: 15px; }
 .seller-insight-stock span { color: #8a6320; font: 500 9px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
 .seller-insight-stock.critical strong, .seller-insight-stock.critical span { color: #954c40; }
+.seller-add-product-card { margin-top: 16px; }
+.seller-add-product-form { margin-top: 3px; }
 .seller-product-editor { padding-top: 4px; }
 .seller-editor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 14px; }
 .seller-editor-heading h4 { margin-top: 6px; }

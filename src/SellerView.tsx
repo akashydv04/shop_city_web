@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { ArrowLeft, CheckCircle2, CircleAlert, Clock3, Edit3, Package, RefreshCw, Save, Store, X, XCircle } from 'lucide-react'
-import { sellerApi, type DeliverySlot, type DeliverySlotInput, type FulfilmentSettings, type OrderStatus, type SellerOrder, type SellerProduct, type SellerProductInput, type SellerProfile, type SellerProfileInput, type SellerReviewStatus, type SellerShop, type SellerShopInput } from './services/sellerApi'
+import { sellerApi, type DeliverySlot, type DeliverySlotInput, type FulfilmentSettings, type OrderStatus, type SellerOrder, type SellerProduct, type SellerProductCreateInput, type SellerProductInput, type SellerProfile, type SellerProfileInput, type SellerReviewStatus, type SellerShop, type SellerShopInput } from './services/sellerApi'
 import { authApi } from './services/authApi'
 import AuthControls from './AuthControls'
 import NotificationBell from './NotificationBell'
@@ -56,6 +56,7 @@ export default function SellerView() {
   const [profileSaving, setProfileSaving] = useState(false)
   const [shopSaving, setShopSaving] = useState(false)
   const [savingProductKey, setSavingProductKey] = useState<string | null>(null)
+  const [creatingProductShopId, setCreatingProductShopId] = useState<string | null>(null)
   const [editingProductKey, setEditingProductKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [productsError, setProductsError] = useState<string | null>(null)
@@ -201,6 +202,26 @@ export default function SellerView() {
     }
   }
 
+  async function createProduct(shopId: string, input: SellerProductCreateInput) {
+    setCreatingProductShopId(shopId)
+    setProductsError(null)
+    setError(null)
+    setNotice(null)
+    try {
+      const created = await sellerApi.createProduct(shopId, input)
+      setProductsByShop((current) => ({
+        ...current,
+        [shopId]: [...(current[shopId] ?? []), created],
+      }))
+      setNotice(`${created.name} was added to the catalogue.`)
+    } catch (reason: unknown) {
+      setProductsError(reason instanceof Error ? reason.message : 'The product could not be added.')
+      throw reason
+    } finally {
+      setCreatingProductShopId(null)
+    }
+  }
+
   async function transitionOrder(order: SellerOrder, nextStatus: OrderStatus) {
     const action = orderTransitions[order.status].find((candidate) => candidate.status === nextStatus)
     if (!action || !window.confirm(`${action.label} for order #${order.id.slice(0, 8)}? This changes the order status in the backend.`)) return
@@ -257,7 +278,8 @@ export default function SellerView() {
           </section>
         </div>}
          {!loading && <section className="seller-card seller-shops-card" aria-labelledby="shops-heading"><div className="seller-card-heading"><div><span className="overline">SHOP MANAGEMENT</span><h2 id="shops-heading">Your shops</h2></div><span className="count-label">{shops.length} {shops.length === 1 ? 'shop' : 'shops'}</span></div>{shops.length === 0 ? <div className="seller-empty"><Store size={25} /><h3>No shops yet</h3><p>Create a shop above to send it to the backend for review.</p></div> : <div className="seller-shop-list">{shops.map((shop) => <ShopStatusCard key={shop.id || `${shop.name}-${shop.slug}`} shop={shop} />)}</div>}</section>}
-         {!loading && <section className="seller-card seller-catalogue-card" aria-labelledby="catalogue-heading"><div className="seller-card-heading"><div><span className="overline">CATALOGUE MANAGEMENT</span><h2 id="catalogue-heading">Products in your approved shops</h2></div><span className="count-label">{approvedShops.length} {approvedShops.length === 1 ? 'approved shop' : 'approved shops'}</span></div><p className="seller-section-intro">Keep prices, inventory, and availability current for customers. Only approved shops can publish catalogue changes.</p>{approvedShops.length === 0 ? <div className="seller-empty seller-no-approved"><Package size={27} /><h3>No approved shop yet</h3><p>Products become available here after an admin approves one of your shops.</p></div> : productsLoading ? <div className="seller-loading seller-catalogue-loading" role="status"><div className="loader" /><h3>Loading your catalogues</h3><p>Reading products from each approved shop.</p></div> : <>{productsError && <div className="seller-alert seller-alert-error seller-products-error" role="alert"><CircleAlert size={18} /><span>{productsError}</span></div>}<div className="seller-catalogue-list">{approvedShops.map((shop) => <section className="seller-catalogue-shop" key={shop.id} aria-labelledby={`catalogue-shop-${shop.id}`}><div className="seller-catalogue-shop-heading"><div><span className="overline">APPROVED SHOP</span><h3 id={`catalogue-shop-${shop.id}`}>{shop.name}</h3></div><span className="seller-status seller-status-approved"><CheckCircle2 size={15} aria-hidden="true" /> Approved</span></div>{(productsByShop[shop.id] ?? []).length === 0 ? <div className="seller-empty seller-product-empty"><Package size={23} /><h4>No products yet</h4><p>This shop does not have any products to edit.</p></div> : <div className="seller-product-list">{(productsByShop[shop.id] ?? []).map((product) => <SellerProductCard key={product.id} product={product} editing={editingProductKey === `${shop.id}:${product.id}`} saving={savingProductKey === `${shop.id}:${product.id}`} onEdit={() => setEditingProductKey(`${shop.id}:${product.id}`)} onCancel={() => setEditingProductKey(null)} onSave={(input) => saveProduct(shop.id, product.id, input)} />)}</div>}</section>)}</div></> }</section>}
+           {!loading && <section className="seller-card seller-catalogue-card" aria-labelledby="catalogue-heading"><div className="seller-card-heading"><div><span className="overline">CATALOGUE MANAGEMENT</span><h2 id="catalogue-heading">Products in your approved shops</h2></div><span className="count-label">{approvedShops.length} {approvedShops.length === 1 ? 'approved shop' : 'approved shops'}</span></div><p className="seller-section-intro">Keep prices, inventory, and availability current for customers. Only approved shops can publish catalogue changes.</p>{approvedShops.length === 0 ? <div className="seller-empty seller-no-approved"><Package size={27} /><h3>No approved shop yet</h3><p>Products become available here after an admin approves one of your shops.</p></div> : productsLoading ? <div className="seller-loading seller-catalogue-loading" role="status"><div className="loader" /><h3>Loading your catalogues</h3><p>Reading products from each approved shop.</p></div> : <>{productsError && <div className="seller-alert seller-alert-error seller-products-error" role="alert"><CircleAlert size={18} /><span>{productsError}</span></div>}<div className="seller-catalogue-list">{approvedShops.map((shop) => <section className="seller-catalogue-shop" key={shop.id} aria-labelledby={`catalogue-shop-${shop.id}`}><div className="seller-catalogue-shop-heading"><div><span className="overline">APPROVED SHOP</span><h3 id={`catalogue-shop-${shop.id}`}>{shop.name}</h3></div><span className="seller-status seller-status-approved"><CheckCircle2 size={15} aria-hidden="true" /> Approved</span></div>{(productsByShop[shop.id] ?? []).length === 0 ? <div className="seller-empty seller-product-empty"><Package size={23} /><h4>No products yet</h4><p>This shop does not have any products to edit.</p></div> : <div className="seller-product-list">{(productsByShop[shop.id] ?? []).map((product) => <SellerProductCard key={product.id} product={product} editing={editingProductKey === `${shop.id}:${product.id}`} saving={savingProductKey === `${shop.id}:${product.id}`} onEdit={() => setEditingProductKey(`${shop.id}:${product.id}`)} onCancel={() => setEditingProductKey(null)} onSave={(input) => saveProduct(shop.id, product.id, input)} />)}</div>}</section>)}</div></> }</section>}
+           {approvedShops.length > 0 && !loading && <AddProductPanel shops={approvedShops} savingShopId={creatingProductShopId} onCreate={createProduct} />}
           {!loading && <section className="seller-card seller-orders-card" aria-labelledby="seller-orders-heading"><div className="seller-card-heading"><div><span className="overline">ORDER QUEUE</span><h2 id="seller-orders-heading">Orders to fulfil</h2></div><span className="count-label">{orders.length} {orders.length === 1 ? 'order' : 'orders'}</span></div><p className="seller-section-intro">Move each order through only the statuses allowed by the backend. Every action is confirmed and then read back from the queue.</p>{ordersError && <div className="seller-alert seller-alert-error seller-products-error" role="alert"><CircleAlert size={18} /><span>{ordersError}</span><button className="seller-inline-retry" onClick={() => void loadOrders(true)} disabled={ordersRefreshing}>Retry</button></div>}{ordersLoading ? <div className="seller-loading seller-catalogue-loading" role="status"><div className="loader" /><h3>Loading order queue</h3><p>Reading orders assigned to your shops from the backend.</p></div> : orders.length === 0 && !ordersError ? <div className="seller-empty seller-no-approved"><Package size={27} /><h3>No orders in the queue</h3><p>Orders from your shops will appear here when the backend exposes them.</p></div> : orders.length > 0 ? <div className="seller-order-list">{orders.map((order) => <SellerOrderCard key={order.id} order={order} busy={orderActionId === order.id} onTransition={(status) => void transitionOrder(order, status)} />)}</div> : null}</section>}
          </>}
            {sellerApi.isAvailable() && !loading && <section className="seller-card seller-insights-card" aria-labelledby="inventory-insights-heading"><div className="seller-card-heading"><div><span className="overline">SELLER TOOL · READ ONLY</span><h2 id="inventory-insights-heading">Low-stock watch</h2></div><span className="count-label">{lowStockItems.length} {lowStockItems.length === 1 ? 'item' : 'items'}</span></div><p className="seller-section-intro">Active products at or below {LOW_STOCK_THRESHOLD} units, calculated from the latest approved-shop catalogue response. This view does not change inventory or call an AI provider.</p>{approvedShops.length === 0 ? <div className="seller-empty seller-insight-empty"><Package size={25} /><h3>Nothing to monitor yet</h3><p>Approve a shop and publish products before inventory insights can appear.</p></div> : productsLoading ? <div className="seller-loading seller-insight-loading" role="status"><div className="loader" /><p>Checking current inventory.</p></div> : productsError ? <div className="seller-empty seller-insight-empty" role="status"><CircleAlert size={25} /><h3>Inventory insight unavailable</h3><p>Refresh the catalogue to calculate low-stock items from the backend response.</p></div> : lowStockItems.length === 0 ? <div className="seller-empty seller-insight-empty" role="status"><CheckCircle2 size={25} /><h3>No low-stock items</h3><p>All active products currently have more than {LOW_STOCK_THRESHOLD} units.</p></div> : <div className="seller-insight-list">{lowStockItems.map(({ shopName, product }) => <article className="seller-insight-row" key={product.id}><div className="seller-insight-icon"><Package size={18} /></div><div className="seller-insight-copy"><strong>{product.name}</strong><span>{shopName}</span></div><div className={`seller-insight-stock ${product.quantity === 0 ? 'critical' : 'warning'}`}><strong>{product.quantity}</strong><span>{product.quantity === 0 ? 'Out of stock' : 'Units left'}</span></div></article>)}</div>}</section>}
@@ -267,6 +289,43 @@ export default function SellerView() {
 
 function ShopStatusCard({ shop }: { shop: SellerShop }) {
   return <><article className="seller-shop-item"><div className="seller-shop-icon"><Store size={21} /></div><div className="seller-shop-details"><div className="seller-shop-title"><h3>{shop.name}</h3><StatusBadge status={shop.status} /></div><p>{shop.description || 'No description provided.'}</p><small>{shop.city}{shop.slug ? ` · ${shop.slug}` : ''}</small>{shop.status === 'REJECTED' && shop.rejectionReason && <div className="seller-rejection">Backend feedback: {shop.rejectionReason}</div>}</div></article>{shop.status === 'APPROVED' && <FulfilmentCard shop={shop} />}</>
+}
+
+function AddProductPanel({ shops, savingShopId, onCreate }: { shops: SellerShop[]; savingShopId: string | null; onCreate: (shopId: string, input: SellerProductCreateInput) => Promise<void> }) {
+  const [shopId, setShopId] = useState(shops[0]?.id ?? '')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [price, setPrice] = useState('')
+  const [initialQuantity, setInitialQuantity] = useState('0')
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!shops.some((shop) => shop.id === shopId)) setShopId(shops[0]?.id ?? '')
+  }, [shops, shopId])
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmedName = name.trim()
+    const parsedPrice = Number(price)
+    const parsedQuantity = Number(initialQuantity)
+    if (!shopId) return setValidationError('Choose an approved shop.')
+    if (!trimmedName) return setValidationError('Product name is required.')
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) return setValidationError('Price must be zero or greater.')
+    if (!Number.isInteger(parsedQuantity) || parsedQuantity < 0) return setValidationError('Initial inventory must be a whole number zero or greater.')
+    setValidationError(null)
+    try {
+      await onCreate(shopId, { name: trimmedName, description: description.trim(), price: parsedPrice, initialQuantity: parsedQuantity })
+      setName('')
+      setDescription('')
+      setPrice('')
+      setInitialQuantity('0')
+    } catch {
+      // The parent keeps the form available and renders the backend error.
+    }
+  }
+
+  const busy = savingShopId !== null
+  return <section className="seller-card seller-add-product-card" aria-labelledby="add-product-heading"><div className="seller-card-heading"><div><span className="overline">CATALOGUE ACTION</span><h2 id="add-product-heading">Add a new product</h2></div><Package size={21} aria-hidden="true" /></div><p className="seller-section-intro">Create a product in an approved shop. The backend stores the product and starting inventory; customers see it only when it is active and the shop is approved.</p><form className="seller-form seller-add-product-form" onSubmit={(event) => void submit(event)}><div className="form-field form-field-wide"><label htmlFor="new-product-shop">Approved shop <span aria-hidden="true">*</span></label><select id="new-product-shop" value={shopId} disabled={busy} onChange={(event) => setShopId(event.target.value)}>{shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name} · {shop.city}</option>)}</select></div><div className="form-field form-field-wide"><label htmlFor="new-product-name">Product name <span aria-hidden="true">*</span></label><input id="new-product-name" required maxLength={200} value={name} disabled={busy} onChange={(event) => setName(event.target.value)} placeholder="e.g. Whole wheat atta" /></div><div className="form-field"><label htmlFor="new-product-price">Price <span aria-hidden="true">*</span></label><input id="new-product-price" required type="number" min="0" step="0.01" value={price} disabled={busy} onChange={(event) => setPrice(event.target.value)} placeholder="0.00" /></div><div className="form-field"><label htmlFor="new-product-quantity">Starting inventory <span aria-hidden="true">*</span></label><input id="new-product-quantity" required type="number" min="0" step="1" value={initialQuantity} disabled={busy} onChange={(event) => setInitialQuantity(event.target.value)} /></div><div className="form-field form-field-wide"><label htmlFor="new-product-description">Description</label><textarea id="new-product-description" rows={3} maxLength={1000} value={description} disabled={busy} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the pack size or key details." /></div>{validationError && <p className="seller-validation-error" role="alert">{validationError}</p>}<div className="form-actions form-field-wide"><button className="seller-primary-button" type="submit" disabled={busy}>{busy ? 'Adding product…' : 'Add product'}</button><span className="form-hint">New products are active by default and can be edited below.</span></div></form></section>
 }
 
 function FulfilmentCard({ shop }: { shop: SellerShop }) {
