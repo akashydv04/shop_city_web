@@ -5,7 +5,7 @@ export interface Shop {
   name: string
   category: Exclude<Category, 'All'>
   description: string
-  rating: number
+  rating?: number
   distance: string
   accent: string
   initials: string

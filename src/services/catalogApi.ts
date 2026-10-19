@@ -83,7 +83,7 @@ function mapApiCatalog(payload: unknown): Catalog {
       name,
       category,
       description: shop.description?.trim() || 'Local essentials from your neighbourhood',
-      rating: toNumber(shop.rating, 0),
+      ...(shop.rating === undefined || shop.rating === null ? {} : { rating: toNumber(shop.rating) }),
       distance: shop.distance?.trim() || 'Nearby',
       accent: category === 'Fresh' ? 'mint' : category === 'Tiffin' ? 'peach' : category === 'Grocery' ? 'lavender' : 'sky',
       initials: name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
