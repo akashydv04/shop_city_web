@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, CheckCircle2, CircleAlert, Clock3, FileText, Package, RefreshCw, ShieldAlert, XCircle } from 'lucide-react'
 import { appConfig } from './config/environment'
 import { orderApi } from './services/orderApi'
-import type { OrderStatus, SellerOrder } from './services/sellerApi'
+import type { OrderPaymentMethod, OrderPaymentStatus, OrderStatus, SellerOrder } from './services/sellerApi'
 import { authApi } from './services/authApi'
 import AuthControls from './AuthControls'
 import NotificationBell from './NotificationBell'
@@ -12,9 +12,27 @@ const statusCopy: Record<OrderStatus, string> = {
   PENDING: 'Placed',
   CONFIRMED: 'Confirmed',
   PREPARING: 'Preparing',
-  READY: 'Ready for delivery',
+  READY: 'Ready for collection / delivery',
   COMPLETED: 'Completed',
   CANCELLED: 'Cancelled',
+}
+
+const paymentMethodCopy: Record<OrderPaymentMethod, string> = { ONLINE: 'Online payment', CASH_LOCAL: 'Cash on delivery / pickup' }
+const paymentStatusCopy: Record<OrderPaymentStatus, string> = {
+  PAYMENT_PENDING: 'Awaiting payment', CONFIRMED: 'Payment confirmed', PAID: 'Paid', FAILED: 'Payment failed', CASH_DUE: 'Cash due',
+}
+
+// Keep ambiguous submissions across detail remounts and navigation in this tab.
+// A changed payload is a new submission; retrying the same payload reuses its key.
+const pendingRefundKeys = new Map<string, string>()
+
+function refundSubmissionKey(submission: string) {
+  let key = pendingRefundKeys.get(submission)
+  try { key ??= sessionStorage.getItem(submission) ?? undefined } catch { /* In-memory retries still work when browser storage is unavailable. */ }
+  key ??= `dukaansetu-refund-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
+  pendingRefundKeys.set(submission, key)
+  try { sessionStorage.setItem(submission, key) } catch { /* Retain the in-memory key. */ }
+  return key
 }
 
 function StatusBadge({ status }: { status: OrderStatus }) {
@@ -125,7 +143,17 @@ export default function OrdersView() {
 }
 
 function OrderDetail({ order, loading, error, notice, onCreated }: { order: SellerOrder | null; loading: boolean; error: string | null; notice: string | null; onCreated: (request: RefundRequest) => void }) {
-  return <section className="seller-card order-detail-card" aria-labelledby="order-detail-heading"><div className="seller-card-heading"><div><span className="overline">ORDER DETAIL</span><h2 id="order-detail-heading">{order ? `Order #${order.id.slice(0, 8)}` : 'Select an order'}</h2></div>{order && <StatusBadge status={order.status} />}</div>{loading ? <div className="order-detail-state" role="status"><div className="loader" /><p>Loading order details…</p></div> : error ? <div className="order-detail-state order-detail-error" role="alert"><CircleAlert size={25} /><p>{error}</p></div> : !order ? <div className="order-detail-state"><Package size={27} /><p>Select an order to see its items and total.</p></div> : <><div className="order-detail-meta"><span>Placed {formatDate(order.createdAt)}</span><span>Shop ID {order.shopId}</span></div><div className="order-item-list">{order.items.map((item) => <div className="order-item-row" key={`${item.productId}-${item.productName}`}><div><strong>{item.productName}</strong><span>{item.quantity} × {formatPrice(item.unitPrice)}</span></div><b>{formatPrice(item.quantity * item.unitPrice)}</b></div>)}</div><div className="order-total"><span>Total</span><strong>{formatPrice(order.total)}</strong></div>{appConfig.environment === 'dev' && <RefundRequestForm order={order} onCreated={onCreated} notice={notice} />}</>}</section>
+  return <section className="seller-card order-detail-card" aria-labelledby="order-detail-heading">
+    <div className="seller-card-heading"><div><span className="overline">ORDER DETAIL</span><h2 id="order-detail-heading">{order ? `Order #${order.id.slice(0, 8)}` : 'Select an order'}</h2></div>{order && <StatusBadge status={order.status} />}</div>
+    {loading ? <div className="order-detail-state" role="status"><div className="loader" /><p>Loading order details…</p></div> : error ? <div className="order-detail-state order-detail-error" role="alert"><CircleAlert size={25} /><p>{error}</p></div> : !order ? <div className="order-detail-state"><Package size={27} /><p>Select an order to see its items and total.</p></div> : <>
+      <div className="order-detail-meta"><strong>{order.shopName}</strong><span>Placed {formatDate(order.createdAt)}</span>{order.updatedAt && <span>Last updated {formatDate(order.updatedAt)}</span>}</div>
+      <div className="order-item-list">{order.items.map((item) => <div className="order-item-row" key={`${item.productId}-${item.productName}`}><div><strong>{item.productName}</strong><span>{item.quantity} × {formatPrice(item.unitPrice)}</span></div><b>{formatPrice(item.quantity * item.unitPrice)}</b></div>)}</div>
+      <div className="order-total"><span>Total</span><strong>{formatPrice(order.total)}</strong></div>
+      <section className="support-description" aria-label="Payment details"><h3>Payment</h3><p>{order.paymentMethod ? paymentMethodCopy[order.paymentMethod] : 'Payment method unavailable'} · {order.paymentStatus ? paymentStatusCopy[order.paymentStatus] : 'Payment status unavailable'}</p>{order.paymentStatus === 'CASH_DUE' && <p>{formatPrice(order.total)} to pay in cash to the shop.</p>}{order.paymentStatus === 'PAYMENT_PENDING' && <p>Your online payment has not yet been confirmed.</p>}{order.paymentStatus === 'FAILED' && <p>The online payment was unsuccessful. Contact support if you were charged.</p>}</section>
+      <section className="support-description" aria-label="Order timeline"><h3>Order timeline</h3>{order.statusHistory.length ? <ol className="refund-history-timeline">{order.statusHistory.map((entry, index) => <li key={`${entry.changedAt}-${index}`}><strong>{entry.fromStatus ? `${statusCopy[entry.fromStatus]} → ` : ''}{statusCopy[entry.toStatus]}</strong><span> · {formatDate(entry.changedAt)}</span></li>)}</ol> : <p>No status history has been returned for this order.</p>}</section>
+      {appConfig.environment === 'dev' && <RefundRequestForm key={order.id} order={order} onCreated={onCreated} notice={notice} />}
+    </>}
+  </section>
 }
 
 function RefundRequestForm({ order, onCreated, notice }: { order: SellerOrder; onCreated: (request: RefundRequest) => void; notice: string | null }) {
@@ -134,23 +162,31 @@ function RefundRequestForm({ order, onCreated, notice }: { order: SellerOrder; o
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const submitting = useRef(false)
   const maxAmount = order.total
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (submitting.current) return
     const requestedAmount = kind === 'FULL' ? maxAmount : Number(amount)
     if (!Number.isFinite(requestedAmount) || requestedAmount <= 0 || requestedAmount > maxAmount || reason.trim().length < 10) {
       setError(`Enter an amount up to ${formatPrice(maxAmount)} and a reason of at least 10 characters.`)
       return
     }
     if (!window.confirm(`Submit a ${kind === 'FULL' ? 'full' : 'partial'} refund request for ${formatMoney(requestedAmount)}? This only opens a human review and does not move money.`)) return
+    submitting.current = true
     setBusy(true); setError(null)
+    const input = { orderId: order.id, amount: requestedAmount, reason: reason.trim() }
+    const submission = `dukaansetu-refund-submission:${JSON.stringify([appConfig.apiBaseUrl, authApi.getIdentity()?.id, input.orderId, input.amount, input.reason])}`
+    const idempotencyKey = refundSubmissionKey(submission)
     try {
-      const created = await refundApi.create({ orderId: order.id, amount: requestedAmount, reason: reason.trim() })
+      const created = await refundApi.create({ ...input, idempotencyKey })
+      pendingRefundKeys.delete(submission)
+      try { sessionStorage.removeItem(submission) } catch { /* The successful submission no longer needs an in-memory retry key. */ }
       setReason(''); setAmount(String(order.total)); setKind('FULL'); onCreated(created)
     } catch (reasonValue: unknown) {
       setError(reasonValue instanceof Error ? reasonValue.message : 'The refund request could not be submitted.')
-    } finally { setBusy(false) }
+    } finally { submitting.current = false; setBusy(false) }
   }
 
   return <div className="refund-request-panel"><div className="refund-panel-heading"><div><span className="overline">DEVELOPMENT ONLY · REFUND REQUEST</span><h3>Ask for a refund</h3></div><FileText size={20} /></div><p className="refund-panel-copy">Request a full or partial amount for human review. This screen does not call a payment provider or move money automatically.</p><form className="refund-form" onSubmit={(event) => void submit(event)}><div className="refund-kind" role="group" aria-label="Refund amount type"><label><input type="radio" checked={kind === 'FULL'} disabled={busy} onChange={() => { setKind('FULL'); setAmount(String(order.total)) }} /> Full refund · {formatPrice(order.total)}</label><label><input type="radio" checked={kind === 'PARTIAL'} disabled={busy} onChange={() => setKind('PARTIAL')} /> Partial refund</label></div>{kind === 'PARTIAL' && <div className="form-field"><label htmlFor="refund-amount">Requested amount <span>*</span></label><input id="refund-amount" type="number" min="0.01" max={maxAmount} step="0.01" value={amount} disabled={busy} onChange={(event) => setAmount(event.target.value)} /></div>}<div className="form-field"><label htmlFor="refund-reason">Reason <span>*</span></label><textarea id="refund-reason" value={reason} disabled={busy} minLength={10} required onChange={(event) => setReason(event.target.value)} placeholder="Tell the reviewer what happened and what amount should be considered." /></div>{error && <div className="seller-alert seller-alert-error" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}{notice && <div className="seller-alert seller-alert-success" role="status"><CheckCircle2 size={16} /><span>{notice}</span></div>}<button className="seller-primary-button" type="submit" disabled={busy || !refundApi.customerAvailable()}>{busy ? 'Submitting…' : 'Submit for human review'}</button></form></div>

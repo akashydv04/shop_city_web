@@ -66,6 +66,8 @@ async function request(path: string) {
 export interface CreateOrderInput {
   shopId: string
   items: Array<{ productId: string; quantity: number }>
+  fulfilmentMethod?: 'PICKUP' | 'DELIVERY'
+  deliverySlotId?: string
 }
 
 export interface OrderApi {

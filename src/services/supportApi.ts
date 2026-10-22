@@ -6,7 +6,8 @@ export type SupportCaseStatus = 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED'
 export interface SupportCase {
   id: string
   customerId: string
-  orderId: string
+  orderId?: string
+  shopId?: string
   reason: string
   description: string
   status: SupportCaseStatus
@@ -18,7 +19,8 @@ export interface SupportCase {
 }
 
 export interface CreateSupportCaseInput {
-  orderId: string
+  orderId?: string
+  shopId?: string
   reason: string
   description: string
 }
@@ -62,7 +64,8 @@ export function mapSupportCase(payload: unknown): SupportCase {
   return {
     id: stringValue(raw.id ?? raw.caseId ?? raw.case_id),
     customerId: stringValue(raw.customerId ?? raw.customer_id ?? raw.buyerId ?? raw.buyer_id ?? customer.id),
-    orderId: stringValue(raw.orderId ?? raw.order_id ?? objectValue(raw.order).id),
+    ...(stringValue(raw.orderId ?? raw.order_id ?? objectValue(raw.order).id) ? { orderId: stringValue(raw.orderId ?? raw.order_id ?? objectValue(raw.order).id) } : {}),
+    ...(stringValue(raw.shopId ?? raw.shop_id ?? objectValue(raw.shop).id) ? { shopId: stringValue(raw.shopId ?? raw.shop_id ?? objectValue(raw.shop).id) } : {}),
     reason: stringValue(raw.reasonCode ?? raw.reason_code ?? raw.reason ?? raw.category, 'Other'),
     description: stringValue(raw.description ?? raw.message),
     status: caseStatus(raw.status ?? raw.caseStatus ?? raw.case_status),
@@ -143,7 +146,7 @@ export const customerSupportApi = {
   isAvailable: customerAvailable,
   unavailableMessage: customerUnavailableMessage,
   async createCase(input: CreateSupportCaseInput) {
-    return mapSupportCase(await request('/api/support/cases', { method: 'POST', body: JSON.stringify({ reasonCode: input.reason, description: input.description, ...(input.orderId ? { orderId: input.orderId } : {}) }) }, 'customer'))
+    return mapSupportCase(await request('/api/support/cases', { method: 'POST', body: JSON.stringify({ reasonCode: input.reason, description: input.description, ...(input.orderId ? { orderId: input.orderId } : {}), ...(input.shopId ? { shopId: input.shopId } : {}) }) }, 'customer'))
   },
   async listCases() {
     return caseList(await request('/api/support/cases', {}, 'customer'))
@@ -165,17 +168,23 @@ export const customerSupportApi = {
 export const supportApi = {
   isAvailable: queueAvailable,
   unavailableMessage: queueUnavailableMessage,
-  async listQueue() {
-    return caseList(await request('/api/support/queue?status=OPEN', {}, 'queue'))
+  async listQueue(status?: SupportCaseStatus) {
+    const query = status ? `?status=${encodeURIComponent(status)}` : ''
+    return caseList(await request(`/api/support/queue${query}`, {}, 'queue'))
   },
   async getCase(caseId: string) {
-    return mapSupportCase(await request(`/api/support/cases/${encodeURIComponent(caseId)}`, {}, 'queue'))
+    // The individual case endpoint is buyer-only; the operator queue returns
+    // the full case payload and is authorized for both Support and Admin.
+    const cases = await this.listQueue()
+    const supportCase = cases.find((item) => item.id === caseId)
+    if (!supportCase) throw new SupportApiError('Support case not found in the queue.', 404)
+    return supportCase
   },
   async updateStatus(caseId: string, input: UpdateSupportCaseInput) {
     return mapSupportCase(await request(`/api/support/cases/${encodeURIComponent(caseId)}/status`, { method: 'PATCH', body: JSON.stringify(input) }, 'queue'))
   },
-  listCases() {
-    return this.listQueue()
+  listCases(status?: SupportCaseStatus) {
+    return this.listQueue(status)
   },
   detail(caseId: string) {
     return this.getCase(caseId)

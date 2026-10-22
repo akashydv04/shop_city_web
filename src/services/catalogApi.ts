@@ -21,6 +21,9 @@ interface ApiProduct {
   emoji?: string | null
   tag?: string | null
   active?: boolean
+  availableQuantity?: number | string | null
+  available_quantity?: number | string | null
+  available?: boolean
 }
 
 interface ApiShop {
@@ -83,15 +86,17 @@ function mapApiCatalog(payload: unknown): Catalog {
       name,
       category,
       description: shop.description?.trim() || 'Local essentials from your neighbourhood',
+      ...(shop.city?.trim() ? { city: shop.city.trim() } : {}),
       ...(shop.rating === undefined || shop.rating === null ? {} : { rating: toNumber(shop.rating) }),
-      distance: shop.distance?.trim() || 'Nearby',
+      distance: shop.distance?.trim() || 'Distance unavailable',
       accent: category === 'Fresh' ? 'mint' : category === 'Tiffin' ? 'peach' : category === 'Grocery' ? 'lavender' : 'sky',
       initials: name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
-      open: shop.open ?? shop.isOpen ?? true,
+      ...(typeof (shop.open ?? shop.isOpen) === 'boolean' ? { open: shop.open ?? shop.isOpen } : {}),
     })
     ;(Array.isArray(shop.products) ? shop.products : []).forEach((rawProduct) => {
       if (rawProduct.active === false || !rawProduct.name) return
       const productId = String(rawProduct.id)
+      const availableQuantity = Math.max(0, Math.floor(toNumber(rawProduct.availableQuantity ?? rawProduct.available_quantity, 0)))
       products.push({
         id: productId,
         shopId: String(rawProduct.shopId ?? id),
@@ -101,6 +106,8 @@ function mapApiCatalog(payload: unknown): Catalog {
         unit: rawProduct.unit?.trim() || '1 item',
         emoji: emojiFor(rawProduct, category),
         ...(rawProduct.tag ? { tag: rawProduct.tag } : {}),
+        availableQuantity,
+        available: rawProduct.available !== false && availableQuantity > 0,
       })
     })
   })

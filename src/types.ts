@@ -5,11 +5,12 @@ export interface Shop {
   name: string
   category: Exclude<Category, 'All'>
   description: string
+  city?: string
   rating?: number
   distance: string
   accent: string
   initials: string
-  open: boolean
+  open?: boolean
 }
 
 export interface Product {
@@ -21,4 +22,6 @@ export interface Product {
   unit: string
   emoji: string
   tag?: string
+  availableQuantity?: number
+  available?: boolean
 }

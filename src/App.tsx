@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, CheckCircle2, ChevronDown, CircleAlert, Clock3, Heart, MapPin, Minus, Plus, RefreshCw, Search, ShoppingBag, Star, Store, X, XCircle } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRight, CheckCircle2, CircleAlert, Clock3, MapPin, Minus, Plus, RefreshCw, Search, ShoppingBag, Star, Store, X, XCircle } from 'lucide-react'
 import { appConfig } from './config/environment'
 import { catalogApi, type CatalogSource } from './services/catalogApi'
 import { cartApi, type AvailableDeliverySlot, type CartLine, type CartSnapshot, type CheckoutPreview, type FulfilmentOptions } from './services/cartApi'
 import { authApi, type DevIdentity } from './services/authApi'
-import { orderApi } from './services/orderApi'
+import { orderApi, OrderApiError, type CreateOrderInput } from './services/orderApi'
+import { useModalFocus } from './useModalFocus'
 import { paymentApi, type PaymentIntent } from './services/paymentApi'
 import type { Category, Product, Shop } from './types'
 import SellerView from './SellerView'
@@ -25,6 +26,10 @@ function newIdempotencyKey(prefix: string) {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `dukaansetu-${prefix}-${random}`
 }
+
+function outOfStock(product: Product) { return product.available === false || (product.availableQuantity !== undefined && product.availableQuantity <= 0) }
+function stockLabel(product: Product) { return outOfStock(product) ? 'Out of stock' : product.availableQuantity !== undefined ? `${product.availableQuantity} available` : product.available === true ? 'In stock' : 'Stock not provided' }
+function identityKey(identity: DevIdentity | null) { return identity ? `${identity.role}:${identity.id}` : 'guest' }
 
 function Storefront({ identity }: { identity: DevIdentity | null }) {
   const [category, setCategory] = useState<Category>('All')
@@ -56,10 +61,25 @@ function Storefront({ identity }: { identity: DevIdentity | null }) {
   const [paymentLoading, setPaymentLoading] = useState(false)
   const [paymentError, setPaymentError] = useState<string | null>(null)
   const [orderId, setOrderId] = useState<string | null>(null)
-  const [orderKey, setOrderKey] = useState<string | null>(null)
-  const [paymentKey, setPaymentKey] = useState<string | null>(null)
+  const attempt = useRef<{ input: CreateOrderInput; orderKey: string; paymentKey: string; orderId?: string } | null>(null)
+  const [checkoutStarted, setCheckoutStarted] = useState(false)
+  const operation = useRef(false)
+  const mounted = useRef(false)
+  const searchInput = useRef<HTMLInputElement>(null)
   const apiCartMode = source === 'api'
   const liveCartEnabled = apiCartMode && identity?.role === 'buyer' && authApi.isAuthenticated()
+  const busy = cartBusy || cartLoading || previewLoading || fulfilmentLoading || paymentLoading
+  const cartLocked = busy || checkoutStarted
+
+  function isCurrent() { return mounted.current && identityKey(authApi.getIdentity()) === identityKey(identity) }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !cartOpen && !selectedProduct) { event.preventDefault(); searchInput.current?.focus() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cartOpen, selectedProduct])
 
   useEffect(() => {
     let alive = true
@@ -69,12 +89,8 @@ function Storefront({ identity }: { identity: DevIdentity | null }) {
   }, [reloadToken])
 
   useEffect(() => {
-    if (!liveCartEnabled || !products.length) return
-    let alive = true
-    setCartLoading(true); setCartError(null)
-    cartApi.load(products, shops).then((snapshot) => { if (alive) { setCart(snapshot.lines); setServerCart(snapshot); setCartLoading(false) } }).catch((reason: unknown) => { if (alive) { setCartLoading(false); setCartError(reason instanceof Error ? reason.message : 'We could not load your live cart.') } })
-    return () => { alive = false }
-  }, [liveCartEnabled, products, shops])
+    if (liveCartEnabled) void refreshServerCart()
+  }, [liveCartEnabled])
 
   const visibleShops = useMemo(() => shops.filter((shop) => (category === 'All' || shop.category === category) && `${shop.name} ${shop.description}`.toLowerCase().includes(query.toLowerCase())), [shops, category, query])
   const visibleProducts = useMemo(() => products.filter((product) => { const shop = shops.find((item) => item.id === product.shopId); return (!activeShop || product.shopId === activeShop) && (category === 'All' || shop?.category === category) && (!query || `${product.name} ${product.detail} ${shop?.name ?? ''}`.toLowerCase().includes(query.toLowerCase())) }), [products, shops, category, query, activeShop])
@@ -85,62 +101,124 @@ function Storefront({ identity }: { identity: DevIdentity | null }) {
   const selectedSlot = fulfilmentOptions?.slots.find((slot) => slot.id === deliverySlotId)
   const total = checkoutPreview?.total ?? serverCart?.total ?? cartSubtotal + (fulfilmentMethod === 'DELIVERY' ? fulfilmentOptions?.deliveryFee ?? 0 : 0)
 
-  function resetPayment() { setSandboxSelected(false); setPaymentIntent(null); setPaymentLoading(false); setPaymentError(null); setOrderId(null); setOrderKey(null); setPaymentKey(null) }
+  function resetPayment() { attempt.current = null; setCheckoutStarted(false); setSandboxSelected(false); setPaymentIntent(null); setPaymentError(null); setOrderId(null) }
+
+  async function applySnapshot(snapshot: CartSnapshot) {
+    if (!isCurrent()) return
+    const sameShop = snapshot.shopId === serverCart?.shopId
+    setCart(snapshot.lines); setServerCart(snapshot); setCheckoutPreview(null); setCartError(null)
+    setFulfilmentOptions(null); setFulfilmentError(null)
+    if (!snapshot.shopId || !snapshot.lines.length) { setDeliverySlotId(''); return }
+    setFulfilmentLoading(true)
+    try {
+      const options = await cartApi.getFulfilmentOptions(snapshot.shopId)
+      if (!isCurrent()) return
+      setFulfilmentOptions(options)
+      const method = sameShop && (fulfilmentMethod === 'PICKUP' ? options.pickupEnabled : options.deliveryEnabled) ? fulfilmentMethod : options.pickupEnabled ? 'PICKUP' : 'DELIVERY'
+      setFulfilmentMethod(method)
+      setDeliverySlotId(sameShop && options.slots.some((slot) => slot.id === deliverySlotId) ? deliverySlotId : '')
+    } catch (reason: unknown) { if (isCurrent()) setFulfilmentError(reason instanceof Error ? reason.message : 'Fulfilment options are unavailable right now.') }
+    finally { if (isCurrent()) setFulfilmentLoading(false) }
+  }
 
   async function addToCart(product: Product) {
-    if (cartBusy) return
+    if (operation.current || checkoutStarted) return
+    const quantity = cart.find((line) => line.product.id === product.id)?.quantity ?? 0
+    if (outOfStock(product) || (product.availableQuantity !== undefined && quantity >= product.availableQuantity)) { setNotice('No more stock is available for this product.'); return }
     if (cart.length && cart[0].product.shopId !== product.shopId) { setNotice('Your cart is for one shop at a time. Open the cart to review it before choosing another shop.'); return }
     if (apiCartMode) {
       if (!liveCartEnabled) { setNotice('Sign in as a buyer to add products to the live cart.'); window.location.hash = '#login'; return }
-      setCartBusy(true); setCartError(null)
-      try { const snapshot = await cartApi.addItem(product, products, shops); setCart(snapshot.lines); setServerCart(snapshot); setCheckoutPreview(null); resetPayment(); setNotice(null) } catch (reason: unknown) { setCartError(reason instanceof Error ? reason.message : 'We could not update your live cart.') } finally { setCartBusy(false) }
+      operation.current = true; setCartBusy(true); setCartError(null); setCheckoutPreview(null)
+      try { const snapshot = await cartApi.addItem(product, products, shops); await applySnapshot(snapshot); if (isCurrent()) setNotice(null) }
+      catch (reason: unknown) { if (isCurrent()) { const message = reason instanceof Error ? reason.message : 'We could not update your live cart.'; setCartError(message); setNotice(message); setCartOpen(true) } }
+      finally { operation.current = false; if (isCurrent()) setCartBusy(false) }
       return
     }
     setNotice(null); setCart((current) => current.some((line) => line.product.id === product.id) ? current.map((line) => line.product.id === product.id ? { ...line, quantity: line.quantity + 1 } : line) : [...current, { product, quantity: 1 }])
   }
 
   async function changeQuantity(productId: string, delta: number) {
+    if (operation.current || checkoutStarted) return
+    const line = cart.find((candidate) => candidate.product.id === productId); if (!line) return
+    const product = products.find((candidate) => candidate.id === productId) ?? line.product
+    if (delta > 0 && (outOfStock(product) || (product.availableQuantity !== undefined && line.quantity >= product.availableQuantity))) { setCartError('No more stock is available for this product.'); return }
     if (apiCartMode) {
       if (!liveCartEnabled) { setNotice('Live cart access requires a signed-in buyer account.'); return }
-      const line = cart.find((candidate) => candidate.product.id === productId); if (!line) return
-      setCartBusy(true); setCartError(null)
-      try { const snapshot = line.quantity + delta <= 0 ? await cartApi.removeItem(productId, products, shops) : await cartApi.updateQuantity(productId, line.quantity + delta, products, shops); setCart(snapshot.lines); setServerCart(snapshot); setCheckoutPreview(null); resetPayment() } catch (reason: unknown) { setCartError(reason instanceof Error ? reason.message : 'We could not update your live cart.') } finally { setCartBusy(false) }
+      operation.current = true; setCartBusy(true); setCartError(null); setCheckoutPreview(null)
+      try { const snapshot = line.quantity + delta <= 0 ? await cartApi.removeItem(productId, products, shops) : await cartApi.updateQuantity(productId, line.quantity + delta, products, shops); await applySnapshot(snapshot) }
+      catch (reason: unknown) { if (isCurrent()) setCartError(reason instanceof Error ? reason.message : 'We could not update your live cart.') }
+      finally { operation.current = false; if (isCurrent()) setCartBusy(false) }
       return
     }
     setCart((current) => current.flatMap((line) => line.product.id === productId && line.quantity + delta <= 0 ? [] : line.product.id === productId ? [{ ...line, quantity: line.quantity + delta }] : [line]))
   }
 
-  async function refreshServerCart(preservePayment = false) {
-    if (!liveCartEnabled) return
-    setCartLoading(true); setCartError(null)
+  async function refreshServerCart() {
+    if (!liveCartEnabled || operation.current) return
+    operation.current = true; setCartLoading(true); setCartError(null); setCheckoutPreview(null)
     try {
-      const snapshot = await cartApi.load(products, shops); setCart(snapshot.lines); setServerCart(snapshot); setCheckoutPreview(preservePayment ? checkoutPreview : null); if (!preservePayment) resetPayment(); setFulfilmentOptions(null); setDeliverySlotId('')
-      if (snapshot.shopId) { setFulfilmentLoading(true); setFulfilmentError(null); try { const options = await cartApi.getFulfilmentOptions(snapshot.shopId); setFulfilmentOptions(options); setFulfilmentMethod(options.pickupEnabled ? 'PICKUP' : 'DELIVERY'); setDeliverySlotId(options.slots[0]?.id ?? '') } catch (reason: unknown) { setFulfilmentError(reason instanceof Error ? reason.message : 'Fulfilment options are unavailable right now.') } finally { setFulfilmentLoading(false) } }
-    } catch (reason: unknown) { setCartError(reason instanceof Error ? reason.message : 'We could not load your live cart.') } finally { setCartLoading(false) }
+      await applySnapshot(await cartApi.load(products, shops))
+    } catch (reason: unknown) { if (isCurrent()) setCartError(reason instanceof Error ? reason.message : 'We could not load your live cart.') }
+    finally { operation.current = false; if (isCurrent()) setCartLoading(false) }
   }
 
   async function previewCheckout() {
-    if (!liveCartEnabled || !cart.length) return
+    if (!liveCartEnabled || !cart.length || operation.current || checkoutStarted) return
     if (!fulfilmentOptions || (!fulfilmentOptions.pickupEnabled && !fulfilmentOptions.deliveryEnabled)) { setCartError('This shop has not configured a pickup or delivery method yet.'); return }
-    if (fulfilmentMethod === 'DELIVERY' && !deliverySlotId) { setCartError('Choose an available delivery slot before previewing checkout.'); return }
-    setPreviewLoading(true); setCartError(null)
-    try { setCheckoutPreview(await cartApi.previewCheckout({ fulfilmentMethod, ...(fulfilmentMethod === 'DELIVERY' ? { deliverySlotId } : {}) })); resetPayment() } catch (reason: unknown) { setCartError(reason instanceof Error ? reason.message : 'Checkout preview is unavailable right now.') } finally { setPreviewLoading(false) }
+    if (fulfilmentMethod === 'PICKUP' ? !fulfilmentOptions.pickupEnabled : !fulfilmentOptions.deliveryEnabled) { setCartError('Choose a supported fulfilment method.'); return }
+    operation.current = true; setPreviewLoading(true); setCartError(null); setCheckoutPreview(null)
+    try {
+      const preview = await cartApi.previewCheckout({ fulfilmentMethod, ...(fulfilmentMethod === 'DELIVERY' && deliverySlotId ? { deliverySlotId } : {}) })
+      if (!isCurrent()) return
+      setCheckoutPreview(preview)
+      if (preview.fulfilmentMethod) setFulfilmentMethod(preview.fulfilmentMethod)
+      setDeliverySlotId(preview.slotId ?? '')
+    } catch (reason: unknown) { if (isCurrent()) setCartError(reason instanceof Error ? reason.message : 'Checkout preview is unavailable right now.') }
+    finally { operation.current = false; if (isCurrent()) setPreviewLoading(false) }
   }
 
   async function startSandboxPayment() {
-    if (!sandboxSelected || !checkoutPreview || !cart.length || !serverCart?.shopId || !paymentApi.isAvailable()) { if (!paymentApi.isAvailable()) setPaymentError(paymentApi.unavailableMessage()); return }
-    setPaymentLoading(true); setPaymentError(null)
+    if (operation.current || !isCurrent() || !sandboxSelected || paymentIntent?.status === 'SUCCEEDED') return
+    if (!paymentApi.isAvailable()) { setPaymentError(paymentApi.unavailableMessage()); return }
+    if (!attempt.current) {
+      if (!checkoutPreview || !cart.length || !serverCart?.shopId) return
+      attempt.current = { input: { shopId: serverCart.shopId, items: cart.map((line) => ({ productId: line.product.id, quantity: line.quantity })), fulfilmentMethod, ...(fulfilmentMethod === 'DELIVERY' && deliverySlotId ? { deliverySlotId } : {}) }, orderKey: newIdempotencyKey('order'), paymentKey: newIdempotencyKey('payment') }
+    }
+    const currentAttempt = attempt.current
+    operation.current = true; setCheckoutStarted(true); setCheckoutPreview(null); setPaymentLoading(true); setPaymentError(null)
     try {
-      const currentOrderKey = orderKey ?? newIdempotencyKey('order'); if (!orderKey) setOrderKey(currentOrderKey)
-      const order = orderId ? await orderApi.getDetail(orderId) : await orderApi.create({ shopId: serverCart.shopId, items: cart.map((line) => ({ productId: line.product.id, quantity: line.quantity })) }, currentOrderKey)
-      if (!orderId) setOrderId(order.id)
-      const currentPaymentKey = paymentKey ?? newIdempotencyKey('payment'); if (!paymentKey) setPaymentKey(currentPaymentKey)
-      const intent = await paymentApi.createSandboxIntent({ orderId: order.id, idempotencyKey: currentPaymentKey }); setPaymentIntent(intent)
-      if (intent.status === 'PENDING') for (let attempt = 0; attempt < 12; attempt += 1) { await new Promise((resolve) => window.setTimeout(resolve, 1500)); const latest = await paymentApi.getIntent(intent.id); setPaymentIntent(latest); if (latest.status !== 'PENDING') break }
-    } catch (reason: unknown) { setPaymentError(reason instanceof Error ? reason.message : 'The sandbox payment request could not be completed.') } finally { setPaymentLoading(false) }
+      if (!currentAttempt.orderId) {
+        const order = await orderApi.create(currentAttempt.input, currentAttempt.orderKey)
+        if (!isCurrent()) return
+        if (!order.id) throw new Error('The server did not return an order reference. Retry this same checkout to recover it.')
+        currentAttempt.orderId = order.id; setOrderId(order.id)
+        // Order creation consumes the active cart, regardless of payment outcome.
+        setCart([]); setServerCart({ lines: [] }); setFulfilmentOptions(null); setDeliverySlotId('')
+      }
+      if (!isCurrent()) return
+      let latestIntent = paymentIntent ? await paymentApi.getIntent(currentAttempt.orderId) : await paymentApi.createSandboxIntent({ orderId: currentAttempt.orderId, idempotencyKey: currentAttempt.paymentKey })
+      if (!isCurrent()) return
+      setPaymentIntent(latestIntent)
+      if (latestIntent.status === 'PENDING') for (let poll = 0; poll < 12; poll += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500))
+        if (!isCurrent()) return
+        latestIntent = await paymentApi.getIntent(currentAttempt.orderId)
+        if (!isCurrent()) return
+        setPaymentIntent(latestIntent)
+        if (latestIntent.status !== 'PENDING') break
+      }
+    } catch (reason: unknown) {
+      if (isCurrent()) {
+        // A definite validation/auth rejection can be corrected; an ambiguous
+        // timeout or server failure must keep the original request and keys.
+        if (!currentAttempt.orderId && reason instanceof OrderApiError && reason.status !== undefined && [400, 401, 403, 404, 422].includes(reason.status)) resetPayment()
+        setPaymentError(reason instanceof Error ? reason.message : 'The sandbox payment request could not be completed.')
+      }
+    }
+    finally { operation.current = false; if (isCurrent()) setPaymentLoading(false) }
   }
 
-  function openCart() { setCartOpen(true); if (liveCartEnabled && !checkoutPreview && !paymentIntent) void refreshServerCart(true) }
+  function openCart() { setCartOpen(true); setSelectedProduct(null); if (liveCartEnabled && !checkoutStarted) void refreshServerCart() }
 
   function focusSection(id: string) {
     window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
@@ -159,43 +237,63 @@ function Storefront({ identity }: { identity: DevIdentity | null }) {
   }
 
   return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="#top" aria-label="DukaanSetu home"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="location"><MapPin size={17} strokeWidth={2.5} /><div><span className="eyebrow">DELIVERING TO</span><strong>Gurugram, Haryana</strong></div><ChevronDown size={15} /></div><div className="top-actions">{identity?.role === 'buyer' && <><a className="orders-nav-link" href="#orders">Orders</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'seller' && <a className="seller-nav-link" href="#seller">Seller studio</a>}{identity?.role === 'admin' && <><a className="admin-nav-link" href="#admin">Admin</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'support' && <a className="support-nav-link" href="#support">Support</a>}<NotificationBell /><button className="icon-button" aria-label="Saved shops"><Heart size={19} /></button><button className="cart-button" onClick={openCart}><ShoppingBag size={18} /><span>Cart</span>{cartCount > 0 && <b>{cartCount}</b>}</button><AuthControls identity={identity} /></div></header>
+    <header className="topbar"><a className="brand" href="#top" aria-label="DukaanSetu home"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></a><div className="location"><MapPin size={17} strokeWidth={2.5} /><div><span className="eyebrow">LOCAL MARKET</span><strong>Gurugram, Haryana</strong></div></div><div className="top-actions">{identity?.role === 'buyer' && <><a className="orders-nav-link" href="#orders">Orders</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'seller' && <a className="seller-nav-link" href="#seller">Seller studio</a>}{identity?.role === 'admin' && <><a className="admin-nav-link" href="#admin">Admin</a><a className="support-nav-link" href="#support">Support</a></>}{identity?.role === 'support' && <a className="support-nav-link" href="#support">Support</a>}<NotificationBell /><button className="cart-button" onClick={openCart}><ShoppingBag size={18} /><span>Cart</span>{cartCount > 0 && <b>{cartCount}</b>}</button><AuthControls identity={identity} /></div></header>
     <main id="top">{appConfig.environment === 'dev' && <div className="dev-warning" role="note"><strong>Development mode</strong><span>Seeded role login is available as an explicit local fallback; account auth uses the configured API.</span></div>}{!authApi.isAuthenticated() && !identity && appConfig.apiBaseUrl && <div className="dev-warning production-auth-warning" role="status"><strong>Sign in for protected actions</strong><span>The catalogue is public. Cart, orders, support, and workspaces require a signed-in account.</span></div>}{notice && <div className="notice" role="status"><span>{notice}</span><button className="notice-close" onClick={() => setNotice(null)} aria-label="Dismiss notice"><X size={15} /></button></div>}
-      <section className="hero"><div className="hero-copy"><div className="demo-badge"><span className="pulse" /> {appConfig.environment.toUpperCase()} · {source === 'api' ? 'Catalogue API' : source === 'demo' ? 'Demo storefront' : 'Catalogue unavailable'}</div><h1>Your local market,<br /><em>together.</em></h1><p>Discover trusted neighbourhood shops and get the things you need, from people you know.</p><div className="search-wrap"><Search size={20} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search shops, products, or essentials" aria-label="Search shops, products, or essentials" /><kbd>⌘ K</kbd></div><div className="hero-note"><span><MapPin size={14} /> Serving select areas in Gurugram</span><span><Clock3 size={14} /> Same-day neighbourhood delivery</span></div></div><div className="hero-art" aria-hidden="true"><div className="sun" /><div className="arch"><div className="shop-window"><span>YOUR<br />LOCAL<br /><b>MARKET</b></span><div className="window-plants">🌿　🌿</div></div></div><div className="art-leaf leaf-one">✦</div><div className="art-leaf leaf-two">✦</div></div></section>
+      <section className="hero"><div className="hero-copy"><div className="demo-badge"><span className="pulse" /> {appConfig.environment.toUpperCase()} · {source === 'api' ? 'Catalogue API' : source === 'demo' ? 'Demo storefront' : 'Catalogue unavailable'}</div><h1>Your local market,<br /><em>together.</em></h1><p>Discover neighbourhood shops and explore their products.</p><div className="search-wrap"><Search size={20} /><input ref={searchInput} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search shops, products, or essentials" aria-label="Search shops, products, or essentials" aria-keyshortcuts="Control+k Meta+k" /><kbd>Ctrl/⌘ K</kbd></div><div className="hero-note"><span><MapPin size={14} /> Explore shops in Gurugram</span><span><Clock3 size={14} /> Fulfilment options vary by shop</span></div></div><div className="hero-art" aria-hidden="true"><div className="sun" /><div className="arch"><div className="shop-window"><span>YOUR<br />LOCAL<br /><b>MARKET</b></span><div className="window-plants">🌿　🌿</div></div></div><div className="art-leaf leaf-one">✦</div><div className="art-leaf leaf-two">✦</div></div></section>
        <section className="content-section categories-section"><div className="section-heading"><div><span className="overline">EXPLORE THE NEIGHBOURHOOD</span><h2>What are you looking for?</h2></div><span className="count-label">{visibleShops.length} shops nearby</span></div><div className="category-row" role="tablist" aria-label="Shop categories">{categories.map((item) => <button key={item.label} className={`category-chip ${category === item.label ? 'selected' : ''}`} onClick={() => { setCategory(item.label); setActiveShop(null) }} role="tab" aria-selected={category === item.label}><span>{item.icon}</span>{item.label}</button>)}</div></section>
        <section id="shops-section" className="content-section shops-section"><div className="section-heading"><div><span className="overline">MEET YOUR NEIGHBOURS</span><h2>Shops around you</h2></div><button className="text-link" onClick={showAllShops}>View all <ArrowRight size={16} /></button></div>{loading ? <LoadingState /> : error ? <ErrorState onRetry={() => { setError(false); setReloadToken((token) => token + 1) }} /> : visibleShops.length === 0 ? <EmptyState label="shops" /> : <div className="shop-grid">{visibleShops.map((shop) => <ShopCard key={shop.id} shop={shop} active={activeShop === shop.id} onClick={() => selectShop(shop.id)} />)}</div>}</section>
-        <section id="shop-products" className="content-section products-section"><div className="section-heading"><div><span className="overline">A LITTLE SOMETHING FOR TODAY</span><h2>{activeShop ? `${shops.find((shop) => shop.id === activeShop)?.name ?? 'Shop'} products` : 'Popular near you'}</h2></div><div className="products-heading-actions">{activeShop && <button className="text-link" onClick={() => setActiveShop(null)}>Show all products</button>}<span className="fresh-label"><span className="green-dot" /> {source === 'api' ? 'Live catalogue' : 'Local demo data'}</span></div></div>{loading ? <LoadingState /> : !error && visibleProducts.length === 0 ? <EmptyState label="products" /> : !error && <div className="product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} shop={shops.find((shop) => shop.id === product.shopId)} onView={() => setSelectedProduct(product)} onAdd={() => void addToCart(product)} addLabel={apiCartMode && !liveCartEnabled ? 'Sign in' : 'Add'} />)}</div>}</section>
-       {selectedProduct && <ProductDetails product={selectedProduct} shop={shops.find((shop) => shop.id === selectedProduct.shopId)} onClose={() => setSelectedProduct(null)} onAdd={() => { setSelectedProduct(null); void addToCart(selectedProduct) }} addLabel={apiCartMode && !liveCartEnabled ? 'Sign in to add' : 'Add to cart'} />}
+        <section id="shop-products" className="content-section products-section"><div className="section-heading"><div><span className="overline">A LITTLE SOMETHING FOR TODAY</span><h2>{activeShop ? `${shops.find((shop) => shop.id === activeShop)?.name ?? 'Shop'} products` : 'Products near you'}</h2></div><div className="products-heading-actions">{activeShop && <button className="text-link" onClick={() => setActiveShop(null)}>Show all products</button>}<span className="fresh-label"><span className="green-dot" /> {source === 'api' ? 'Live catalogue' : source === 'demo' ? 'Local demo data' : 'Catalogue unavailable'}</span></div></div>{loading ? <LoadingState /> : !error && visibleProducts.length === 0 ? <EmptyState label="products" /> : !error && <div className="product-grid">{visibleProducts.map((product) => <ProductCard key={product.id} product={product} shop={shops.find((shop) => shop.id === product.shopId)} onView={() => setSelectedProduct(product)} onAdd={() => void addToCart(product)} disabled={cartLocked || (product.availableQuantity !== undefined && (cart.find((line) => line.product.id === product.id)?.quantity ?? 0) >= product.availableQuantity)} addLabel={apiCartMode && !liveCartEnabled ? 'Sign in' : 'Add'} />)}</div>}</section>
+       {selectedProduct && <ProductDetails product={selectedProduct} shop={shops.find((shop) => shop.id === selectedProduct.shopId)} onClose={() => setSelectedProduct(null)} onAdd={() => { setSelectedProduct(null); void addToCart(selectedProduct) }} disabled={cartLocked || (selectedProduct.availableQuantity !== undefined && (cart.find((line) => line.product.id === selectedProduct.id)?.quantity ?? 0) >= selectedProduct.availableQuantity)} addLabel={apiCartMode && !liveCartEnabled ? 'Sign in to add' : 'Add to cart'} />}
     </main>
     <footer className="footer"><div className="brand footer-brand"><span className="brand-mark">D</span><span>Dukaan<span>Setu</span></span></div><p>{source === 'api' ? 'Discovering local commerce in Gurugram.' : source === 'demo' ? 'A demo foundation for discovering local commerce in Gurugram.' : 'Catalogue configuration is required for this environment.'}</p><span className="footer-demo">{appConfig.environment.toUpperCase()} · {source === 'api' ? 'CATALOGUE API' : source === 'demo' ? 'DEMO DATA ONLY' : 'CATALOGUE UNAVAILABLE'}</span></footer>
-    {cartOpen && <CartDrawer cart={cart} cartShop={cartShop} cartShopName={serverCart?.shopName} subtotal={cartSubtotal} total={total} mode={apiCartMode ? 'api' : source === 'demo' ? 'demo' : 'unavailable'} liveCartEnabled={liveCartEnabled} loading={cartLoading} busy={cartBusy} error={cartError} fulfilmentOptions={fulfilmentOptions} fulfilmentLoading={fulfilmentLoading} fulfilmentError={fulfilmentError} fulfilmentMethod={fulfilmentMethod} deliverySlotId={deliverySlotId} selectedDeliverySlot={selectedSlot} preview={checkoutPreview} previewLoading={previewLoading} sandboxSelected={sandboxSelected} paymentIntent={paymentIntent} paymentLoading={paymentLoading} paymentError={paymentError} orderId={orderId} onClose={() => setCartOpen(false)} onRefresh={refreshServerCart} onPreview={previewCheckout} onChange={changeQuantity} onFulfilmentMethod={(method) => { setFulfilmentMethod(method); setCheckoutPreview(null); resetPayment(); setCartError(null) }} onDeliverySlot={(slotId) => { setDeliverySlotId(slotId); setCheckoutPreview(null); resetPayment(); setCartError(null) }} onSandboxSelected={(value) => { setSandboxSelected(value); setPaymentError(null) }} onSandboxPayment={startSandboxPayment} />}
+    {cartOpen && <CartDrawer cart={cart.map((line) => ({ ...line, product: { ...line.product, ...products.find((product) => product.id === line.product.id), price: line.product.price } }))} cartShop={cartShop} cartShopName={serverCart?.shopName} subtotal={cartSubtotal} total={total} mode={apiCartMode ? 'api' : source === 'demo' ? 'demo' : 'unavailable'} liveCartEnabled={liveCartEnabled} loading={cartLoading} busy={cartLocked} error={cartError} fulfilmentOptions={fulfilmentOptions} fulfilmentLoading={fulfilmentLoading} fulfilmentError={fulfilmentError} fulfilmentMethod={fulfilmentMethod} deliverySlotId={deliverySlotId} selectedDeliverySlot={selectedSlot} preview={checkoutPreview} previewLoading={previewLoading} sandboxSelected={sandboxSelected} paymentIntent={paymentIntent} paymentLoading={paymentLoading} paymentError={paymentError} orderId={orderId} checkoutStarted={checkoutStarted} operationBusy={busy} onClose={() => setCartOpen(false)} onRefresh={refreshServerCart} onPreview={previewCheckout} onChange={changeQuantity} onFulfilmentMethod={(method) => { if (operation.current || checkoutStarted) return; setFulfilmentMethod(method); setDeliverySlotId(''); setCheckoutPreview(null); setCartError(null) }} onDeliverySlot={(slotId) => { if (operation.current || checkoutStarted) return; setDeliverySlotId(slotId); setCheckoutPreview(null); setCartError(null) }} onSandboxSelected={(value) => { if (operation.current || checkoutStarted) return; setSandboxSelected(value); setPaymentError(null) }} onSandboxPayment={startSandboxPayment} onFinishPayment={() => { if (operation.current || !orderId) return; resetPayment(); void refreshServerCart() }} />}
   </div>
 }
 
-function ShopCard({ shop, active, onClick }: { shop: Shop; active: boolean; onClick: () => void }) { return <article className={`shop-card ${active ? 'active' : ''}`}><button className={`shop-avatar ${shop.accent}`} onClick={onClick} aria-label={`View products from ${shop.name}`}><span>{shop.initials}</span><i>{shop.open ? 'Open' : 'Closed'}</i></button><div className="shop-info"><div className="shop-topline"><span className="shop-category">{shop.category}</span><span className="distance">{shop.distance}</span></div><h3>{shop.name}</h3><p>{shop.description}</p><div className="shop-meta">{shop.rating !== undefined && shop.rating > 0 ? <span><Star size={14} fill="currentColor" /> {shop.rating.toFixed(1)}</span> : <span className="shop-new-label">New shop</span>}<span>·</span><span>{shop.open ? 'Open now' : 'Closed'}</span></div></div><button className="round-arrow" onClick={onClick} aria-label={`View products from ${shop.name}`}><ArrowRight size={17} /></button></article> }
-function ProductCard({ product, shop, onView, onAdd, addLabel }: { product: Product; shop?: Shop; onView: () => void; onAdd: () => void; addLabel: string }) { return <article className="product-card"><div className="product-image"><span>{product.emoji}</span>{product.tag && <b>{product.tag}</b>}<button aria-label={`Save ${product.name}`} className="save-product"><Heart size={16} /></button></div><div className="product-body"><span className="product-shop">{shop?.name}</span><button className="product-view-button" onClick={onView}>{product.name}</button><p>{product.detail}</p><div className="product-bottom"><strong>₹{product.price}</strong><div className="product-actions"><button className="product-see-button" onClick={onView}>See</button><button className="add-button" onClick={onAdd}><Plus size={16} /> {addLabel}</button></div></div></div></article> }
+function ShopCard({ shop, active, onClick }: { shop: Shop; active: boolean; onClick: () => void }) { return <article className={`shop-card ${active ? 'active' : ''}`}><button className={`shop-avatar ${shop.accent}`} onClick={onClick} aria-label={`View products from ${shop.name}`}><span>{shop.initials}</span>{shop.open !== undefined && <i>{shop.open ? 'Open' : 'Closed'}</i>}</button><div className="shop-info"><div className="shop-topline"><span className="shop-category">{shop.category}</span><span className="distance">{shop.distance}</span></div><h3>{shop.name}</h3><p>{shop.description}</p><div className="shop-meta">{shop.rating !== undefined && shop.rating > 0 ? <span><Star size={14} fill="currentColor" /> {shop.rating.toFixed(1)}</span> : <span className="shop-new-label">Not rated</span>}{shop.open !== undefined && <><span>·</span><span>{shop.open ? 'Open now' : 'Closed'}</span></>}</div></div><button className="round-arrow" onClick={onClick} aria-label={`View products from ${shop.name}`}><ArrowRight size={17} /></button></article> }
+function ProductCard({ product, shop, onView, onAdd, addLabel, disabled }: { product: Product; shop?: Shop; onView: () => void; onAdd: () => void; addLabel: string; disabled: boolean }) { return <article className="product-card"><div className="product-image"><span>{product.emoji}</span>{product.tag && <b>{product.tag}</b>}</div><div className="product-body"><span className="product-shop">{shop?.name}</span><button className="product-view-button" onClick={onView}>{product.name}</button><p>{product.detail}</p><span className={`product-stock ${outOfStock(product) ? 'stock-unavailable' : ''}`}>{stockLabel(product)}</span><div className="product-bottom"><strong>₹{product.price}</strong><div className="product-actions"><button className="product-see-button" onClick={onView}>See</button><button className="add-button" onClick={onAdd} disabled={disabled || outOfStock(product)}><Plus size={16} /> {outOfStock(product) ? 'Sold out' : addLabel}</button></div></div></div></article> }
 
-function ProductDetails({ product, shop, onClose, onAdd, addLabel }: { product: Product; shop?: Shop; onClose: () => void; onAdd: () => void; addLabel: string }) { return <div className="product-details-backdrop" role="presentation" onClick={onClose}><section className="product-details" role="dialog" aria-modal="true" aria-labelledby="product-details-heading" onClick={(event) => event.stopPropagation()}><button className="product-details-close" onClick={onClose} aria-label="Close product details"><X size={19} /></button><div className="product-details-emoji">{product.emoji}</div><span className="product-shop">{shop?.name ?? 'Local shop'}</span><h2 id="product-details-heading">{product.name}</h2><p>{product.detail}</p><strong className="product-details-price">₹{product.price}</strong><button className="seller-primary-button product-details-add" onClick={onAdd}><Plus size={17} /> {addLabel}</button></section></div> }
+function ProductDetails({ product, shop, onClose, onAdd, addLabel, disabled }: { product: Product; shop?: Shop; onClose: () => void; onAdd: () => void; addLabel: string; disabled: boolean }) {
+  const dialogRef = useModalFocus(onClose)
+  return <div className="product-details-backdrop" role="presentation" onClick={onClose}><section ref={dialogRef} tabIndex={-1} className="product-details" role="dialog" aria-modal="true" aria-labelledby="product-details-heading" onClick={(event) => event.stopPropagation()}><button className="product-details-close" onClick={onClose} aria-label="Close product details"><X size={19} /></button><div className="product-details-emoji">{product.emoji}</div><span className="product-shop">{shop?.name ?? 'Local shop'}</span><h2 id="product-details-heading">{product.name}</h2><p>{product.detail}</p><p className="product-stock">{stockLabel(product)}</p><strong className="product-details-price">₹{product.price}</strong><button className="seller-primary-button product-details-add" disabled={disabled || outOfStock(product)} onClick={onAdd}><Plus size={17} /> {outOfStock(product) ? 'Out of stock' : addLabel}</button></section></div>
+}
 function LoadingState() { return <div className="state-card"><div className="loader" /><h3>Finding shops around you</h3><p>Just a moment while we check the neighbourhood.</p></div> }
 function EmptyState({ label }: { label: string }) { return <div className="state-card"><div className="state-icon">⌕</div><h3>No {label} found</h3><p>Try a different search or explore another category.</p></div> }
 function ErrorState({ onRetry }: { onRetry: () => void }) { return <div className="state-card error-state"><div className="state-icon">!</div><h3>We couldn’t load the catalogue</h3><p>There was a problem connecting to the catalogue. Please try again.</p><button className="retry-button" onClick={onRetry}>Try again</button></div> }
 
 function CartDrawer(props: {
+  checkoutStarted: boolean; operationBusy: boolean; onFinishPayment: () => void
   cart: CartLine[]; cartShop: Shop | null | undefined; cartShopName?: string; subtotal: number; total: number; mode: 'api' | 'demo' | 'unavailable'; liveCartEnabled: boolean; loading: boolean; busy: boolean; error: string | null; fulfilmentOptions: FulfilmentOptions | null; fulfilmentLoading: boolean; fulfilmentError: string | null; fulfilmentMethod: 'PICKUP' | 'DELIVERY'; deliverySlotId: string; selectedDeliverySlot?: AvailableDeliverySlot; preview: CheckoutPreview | null; previewLoading: boolean; sandboxSelected: boolean; paymentIntent: PaymentIntent | null; paymentLoading: boolean; paymentError: string | null; orderId: string | null; onClose: () => void; onRefresh: () => void; onPreview: () => void; onChange: (id: string, delta: number) => void | Promise<void>; onFulfilmentMethod: (method: 'PICKUP' | 'DELIVERY') => void; onDeliverySlot: (slotId: string) => void; onSandboxSelected: (selected: boolean) => void; onSandboxPayment: () => void | Promise<void>
 }) {
   const itemCount = props.cart.reduce((sum, line) => sum + line.quantity, 0)
   const { mode, fulfilmentOptions, preview } = props
-  return <div className="drawer-backdrop" onClick={props.onClose}><aside className="cart-drawer" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="cart-title">
-    <div className="drawer-header"><div><span className="overline">YOUR BAG</span><h2 id="cart-title">Cart <small>({itemCount})</small></h2></div><div className="drawer-actions">{mode === 'api' && <button className="icon-button" onClick={props.onRefresh} disabled={props.loading || !props.liveCartEnabled} aria-label="Refresh live cart"><RefreshCw size={17} /></button>}<button className="icon-button" onClick={props.onClose} aria-label="Close cart"><X size={20} /></button></div></div>
+  const dialogRef = useModalFocus(props.onClose)
+  return <div className="drawer-backdrop" onClick={props.onClose}><aside ref={dialogRef} tabIndex={-1} className="cart-drawer" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="cart-title">
+    <div className="drawer-header"><div><span className="overline">YOUR BAG</span><h2 id="cart-title">Cart <small>({itemCount})</small></h2></div><div className="drawer-actions">{mode === 'api' && <button className="icon-button" onClick={props.onRefresh} disabled={props.operationBusy || !props.liveCartEnabled} aria-label="Refresh live cart"><RefreshCw size={17} /></button>}<button className="icon-button" onClick={props.onClose} aria-label="Close cart"><X size={20} /></button></div></div>
     {mode === 'api' && !props.liveCartEnabled ? <div className="drawer-state drawer-warning" role="status"><ShoppingBag size={28} /><h3>Live cart unavailable</h3><p>Sign in as a buyer to access the protected API cart. No cart data was stored locally.</p><a className="seller-nav-link" href="#login">Sign in</a></div> : props.loading && !props.cart.length ? <div className="drawer-state" role="status"><div className="loader" /><h3>Refreshing your cart</h3><p>Reading the latest cart from the server.</p></div> : props.error && !props.cart.length ? <div className="drawer-state drawer-error" role="alert"><div className="state-icon">!</div><h3>We couldn’t load your cart</h3><p>{props.error}</p><button className="retry-button" onClick={props.onRefresh} disabled={props.loading}>Try again</button></div> : !props.cart.length ? <div className="drawer-empty"><ShoppingBag size={34} /><h3>Your bag is waiting</h3><p>{mode === 'api' ? 'Your server cart is empty.' : 'Add something lovely from a local shop.'}</p></div> : <>
-      {props.error && <p className="cart-inline-error" role="alert">{props.error}</p>}<div className="cart-shop"><Store size={16} /><span>{props.cartShopName ?? props.cartShop?.name ?? 'Local shop'}</span><small>One shop per order</small></div><div className="cart-lines">{props.cart.map((line) => <div className="cart-line" key={line.product.id}><span className="line-emoji">{line.product.emoji}</span><div><h3>{line.product.name}</h3><p>₹{line.product.price} · {line.product.unit}</p></div><div className="quantity"><button onClick={() => props.onChange(line.product.id, -1)} disabled={props.busy} aria-label={`Remove one ${line.product.name}`}><Minus size={14} /></button><span aria-live="polite">{line.quantity}</span><button onClick={() => props.onChange(line.product.id, 1)} disabled={props.busy} aria-label={`Add one ${line.product.name}`}><Plus size={14} /></button></div></div>)}</div>
+      {props.error && <p className="cart-inline-error" role="alert">{props.error}</p>}<div className="cart-shop"><Store size={16} /><span>{props.cartShopName ?? props.cartShop?.name ?? 'Local shop'}</span><small>One shop per order</small></div><div className="cart-lines">{props.cart.map((line) => <div className="cart-line" key={line.product.id}><span className="line-emoji">{line.product.emoji}</span><div><h3>{line.product.name}</h3><p>₹{line.product.price} · {line.product.unit}</p><p>{stockLabel(line.product)}</p></div><div className="quantity"><button onClick={() => props.onChange(line.product.id, -1)} disabled={props.busy} aria-label={`Remove one ${line.product.name}`}><Minus size={14} /></button><span aria-live="polite">{line.quantity}</span><button onClick={() => props.onChange(line.product.id, 1)} disabled={props.busy || outOfStock(line.product) || (line.product.availableQuantity !== undefined && line.quantity >= line.product.availableQuantity)} aria-label={`Add one ${line.product.name}`}><Plus size={14} /></button></div></div>)}</div>
       <div className="cart-summary"><div><span>{mode === 'api' ? 'Server subtotal' : 'Subtotal'}</span><strong>₹{props.subtotal}</strong></div>{mode === 'api' && props.fulfilmentMethod === 'DELIVERY' && <div><span>Delivery fee</span><strong>{preview?.deliveryFee !== undefined ? `₹${preview.deliveryFee}` : fulfilmentOptions ? `₹${fulfilmentOptions.deliveryFee}` : 'Unavailable until preview'}</strong></div>}<hr /><div className="grand-total"><span>{mode === 'api' ? 'Total preview' : 'Total'}</span><strong>₹{props.total}</strong></div>
-        {mode === 'api' ? <>{props.fulfilmentLoading ? <div className="fulfilment-loading" role="status">Loading pickup and delivery options…</div> : props.fulfilmentError ? <div className="fulfilment-error" role="alert">{props.fulfilmentError}</div> : fulfilmentOptions && <div className="fulfilment-picker" aria-label="Fulfilment method"><span className="overline">FULFILMENT</span><div className="fulfilment-methods"><label className={!fulfilmentOptions.pickupEnabled ? 'disabled' : ''}><input type="radio" name="fulfilment-method" checked={props.fulfilmentMethod === 'PICKUP'} disabled={!fulfilmentOptions.pickupEnabled || props.busy} onChange={() => props.onFulfilmentMethod('PICKUP')} /> Pickup</label><label className={!fulfilmentOptions.deliveryEnabled ? 'disabled' : ''}><input type="radio" name="fulfilment-method" checked={props.fulfilmentMethod === 'DELIVERY'} disabled={!fulfilmentOptions.deliveryEnabled || props.busy} onChange={() => props.onFulfilmentMethod('DELIVERY')} /> Delivery</label></div>{props.fulfilmentMethod === 'DELIVERY' && <div className="fulfilment-slot-field"><label htmlFor="checkout-slot">Available delivery slot</label><select id="checkout-slot" value={props.deliverySlotId} disabled={props.busy || !fulfilmentOptions.slots.length} onChange={(event) => props.onDeliverySlot(event.target.value)}><option value="">{fulfilmentOptions.slots.length ? 'Choose a slot' : 'No slots available'}</option>{fulfilmentOptions.slots.map((slot) => <option key={slot.id} value={slot.id}>{slot.date} · {slot.startTime}–{slot.endTime}</option>)}</select></div>}</div>}
-          <button className="checkout-preview-button" onClick={props.onPreview} disabled={props.previewLoading || props.busy || props.fulfilmentLoading}>{props.previewLoading ? 'Preparing preview…' : 'Preview checkout'}</button><p className="cart-note">The preview is server-priced and does not place an order or claim payment.</p>{preview && <div className="checkout-preview" role="status"><span className="overline">CHECKOUT PREVIEW</span><strong>{preview.total === undefined ? 'Server preview ready' : `₹${preview.total}`}</strong>{preview.fulfilmentMethod && <span>Method {preview.fulfilmentMethod === 'DELIVERY' ? 'Delivery' : 'Pickup'}</span>}{preview.subtotal !== undefined && <span>Server subtotal ₹{preview.subtotal}</span>}{preview.deliveryFee !== undefined && <span>Server delivery fee ₹{preview.deliveryFee}</span>}{(preview.deliverySlot || props.selectedDeliverySlot) && <span>Slot {(preview.deliverySlot || props.selectedDeliverySlot)?.date} · {(preview.deliverySlot || props.selectedDeliverySlot)?.startTime}–{(preview.deliverySlot || props.selectedDeliverySlot)?.endTime}</span>}<p>{preview.message}</p><b>Preview only · no order or payment was created</b></div>}
-          {appConfig.environment === 'dev' && <div className="sandbox-payment" role="group" aria-labelledby="sandbox-payment-heading"><div className="sandbox-payment-heading"><span className="overline">DEVELOPMENT ONLY</span><h3 id="sandbox-payment-heading">Local sandbox payment</h3></div><p>Use the backend sandbox payment intent and webhook state machine for local testing. This does not represent a real charge.</p><label className="sandbox-payment-choice"><input type="checkbox" checked={props.sandboxSelected} disabled={props.paymentLoading} onChange={(event) => props.onSandboxSelected(event.target.checked)} /><span>I explicitly want to test sandbox payment in dev.</span></label><div className="sandbox-warning"><CircleAlert size={15} /> Sandbox only. Never use this flow to claim production payment success.</div>{props.paymentError && <div className="payment-state payment-state-failed" role="alert"><XCircle size={17} /><span>{props.paymentError}</span></div>}{props.paymentIntent && <div className={`payment-state payment-state-${props.paymentIntent.status.toLowerCase()}`} role="status">{props.paymentIntent.status === 'SUCCEEDED' ? <CheckCircle2 size={17} /> : props.paymentIntent.status === 'FAILED' ? <XCircle size={17} /> : <Clock3 size={17} />}<div><strong>Payment {props.paymentIntent.status === 'SUCCEEDED' ? 'succeeded in sandbox' : props.paymentIntent.status === 'FAILED' ? 'failed' : 'pending'}</strong><span>{props.paymentIntent.amount !== undefined && props.paymentIntent.currency ? `Server amount ${props.paymentIntent.currency} ${props.paymentIntent.amount}` : 'Waiting for the server-calculated amount and currency'}</span>{props.paymentIntent.status === 'PENDING' && <small>Waiting for the backend webhook to update this intent. Retrying is idempotent.</small>}{props.paymentIntent.message && <small>{props.paymentIntent.message}</small>}</div></div>}{props.paymentIntent?.status === 'SUCCEEDED' && props.orderId ? <div className="payment-confirmed"><strong>Backend payment state confirmed.</strong><span>Order creation was confirmed with the same idempotent checkout request.</span><a className="seller-nav-link" href="#orders">Open order #{props.orderId.slice(0, 8)}</a></div> : props.paymentIntent?.status === 'SUCCEEDED' ? <div className="payment-confirmed"><strong>Payment confirmed by the backend.</strong><span>The backend did not return an order link. Check Orders or contact Support before retrying.</span><a className="seller-nav-link" href="#orders">Check Orders</a></div> : <button className="sandbox-payment-button" onClick={props.onSandboxPayment} disabled={!props.sandboxSelected || !preview || props.paymentLoading}>{props.paymentLoading ? 'Waiting for sandbox status…' : props.paymentIntent?.status === 'FAILED' || props.paymentError ? 'Retry sandbox payment' : 'Create sandbox payment intent'}</button>}{props.paymentIntent?.status !== 'SUCCEEDED' && <small className="sandbox-idempotency-note">Retries reuse the same order and payment idempotency keys; they do not intentionally duplicate checkout.</small>}</div>}
+        {mode === 'api' ? <>{props.fulfilmentLoading ? <div className="fulfilment-loading" role="status">Loading pickup and delivery options…</div> : props.fulfilmentError ? <div className="fulfilment-error" role="alert">{props.fulfilmentError}</div> : fulfilmentOptions && <div className="fulfilment-picker" aria-label="Choose how to receive your order"><span className="overline">HOW WOULD YOU LIKE TO RECEIVE IT?</span><div className="fulfilment-methods"><label className={!fulfilmentOptions.pickupEnabled ? 'disabled' : ''}><input type="radio" name="fulfilment-method" checked={props.fulfilmentMethod === 'PICKUP'} disabled={!fulfilmentOptions.pickupEnabled || props.busy} onChange={() => props.onFulfilmentMethod('PICKUP')} /><span><strong>Take away</strong><small>Collect from the shop</small></span></label><label className={!fulfilmentOptions.deliveryEnabled ? 'disabled' : ''}><input type="radio" name="fulfilment-method" checked={props.fulfilmentMethod === 'DELIVERY'} disabled={!fulfilmentOptions.deliveryEnabled || props.busy} onChange={() => props.onFulfilmentMethod('DELIVERY')} /><span><strong>Home delivery</strong><small>₹{fulfilmentOptions.deliveryFee} delivery fee</small></span></label></div>{!fulfilmentOptions.pickupEnabled && !fulfilmentOptions.deliveryEnabled && <p role="status">This shop has no available fulfilment method.</p>}{props.fulfilmentMethod === 'DELIVERY' && <div className="fulfilment-slot-field"><label htmlFor="checkout-slot">Delivery time slot (optional)</label><select id="checkout-slot" value={props.deliverySlotId} disabled={props.busy || !fulfilmentOptions.slots.length} onChange={(event) => props.onDeliverySlot(event.target.value)}><option value="">{fulfilmentOptions.slots.length ? 'No scheduled time' : 'No slots available'}</option>{fulfilmentOptions.slots.map((slot) => <option key={slot.id} value={slot.id}>{slot.date} · {slot.startTime}–{slot.endTime}</option>)}</select>{!props.deliverySlotId && <small>No delivery time is selected. The API allows delivery without a slot; this does not confirm a delivery time.</small>}</div>}</div>}
+           <button className="checkout-preview-button" onClick={props.onPreview} disabled={props.busy || !fulfilmentOptions || (!fulfilmentOptions.pickupEnabled && !fulfilmentOptions.deliveryEnabled)}>{props.previewLoading ? 'Preparing preview…' : 'Preview checkout'}</button><p className="cart-note">The preview is server-priced and does not place an order or claim payment.</p>{preview && <div className="checkout-preview" role="status"><span className="overline">CHECKOUT PREVIEW</span><strong>{preview.total === undefined ? 'Server preview ready' : `₹${preview.total}`}</strong>{preview.fulfilmentMethod && <span>Method {preview.fulfilmentMethod === 'DELIVERY' ? 'Home delivery' : 'Take away'}</span>}{preview.subtotal !== undefined && <span>Server subtotal ₹{preview.subtotal}</span>}{preview.deliveryFee !== undefined && <span>Server delivery fee ₹{preview.deliveryFee}</span>}{(preview.deliverySlot || props.selectedDeliverySlot) && <span>Slot {(preview.deliverySlot || props.selectedDeliverySlot)?.date} · {(preview.deliverySlot || props.selectedDeliverySlot)?.startTime}–{(preview.deliverySlot || props.selectedDeliverySlot)?.endTime}</span>}<p>{preview.message}</p><b>Preview only · no order or payment was created</b></div>}
         </> : mode === 'demo' ? <><div className="demo-checkout-state" role="status"><strong>Demo checkout preview only</strong><span>Pickup, delivery slots, payment, and order creation are unavailable without the live API.</span></div><button className="checkout-disabled" disabled>Checkout <span>Unavailable</span></button><p className="cart-note">Demo mode does not create payments or orders.</p></> : <p className="cart-note">Checkout is unavailable until a live cart identity is configured.</p>}
       </div>
     </>}
+    {mode === 'api' && props.liveCartEnabled && appConfig.environment === 'dev' && (props.cart.length > 0 || props.checkoutStarted) && <div className="sandbox-payment" role="group" aria-labelledby="sandbox-payment-heading">
+      <div className="sandbox-payment-heading"><span className="overline">DEVELOPMENT ONLY</span><h3 id="sandbox-payment-heading">Local sandbox payment</h3></div>
+      <p>This creates a backend test order and a sandbox payment request. It does not make a real charge.</p>
+      <label className="sandbox-payment-choice"><input type="checkbox" checked={props.sandboxSelected} disabled={props.busy} onChange={(event) => props.onSandboxSelected(event.target.checked)} /><span>I explicitly want to test sandbox payment in dev.</span></label>
+      <div className="sandbox-warning"><CircleAlert size={15} /> Sandbox only · no live payment.</div>
+      {props.orderId && <div className="payment-confirmed" role="status"><strong>Order created · cart consumed</strong><a className="seller-nav-link" href="#orders">Open order #{props.orderId.slice(0, 8)}</a></div>}
+      {props.checkoutStarted && !props.orderId && <p role="status">Order confirmation is pending. Retry this same checkout to recover its outcome before changing the cart.</p>}
+      {props.paymentError && <div className="payment-state payment-state-failed" role="alert"><XCircle size={17} /><span>{props.paymentError}</span></div>}
+      {props.paymentIntent && <div className={`payment-state payment-state-${props.paymentIntent.status.toLowerCase()}`} role="status">
+        {props.paymentIntent.status === 'SUCCEEDED' ? <CheckCircle2 size={17} /> : props.paymentIntent.status === 'FAILED' ? <XCircle size={17} /> : <Clock3 size={17} />}
+        <div><strong>Sandbox payment {props.paymentIntent.status.toLowerCase()}</strong><span>{props.paymentIntent.amount !== undefined && props.paymentIntent.currency ? `Server amount ${props.paymentIntent.currency} ${props.paymentIntent.amount}` : 'Server amount not supplied'}</span>{props.paymentIntent.message && <small>{props.paymentIntent.message}</small>}{props.paymentIntent.status === 'PENDING' && <small>Awaiting the backend payment update. Check status again if it remains pending.</small>}</div>
+      </div>}
+      {props.paymentIntent?.status !== 'SUCCEEDED' && <button className="sandbox-payment-button" onClick={props.onSandboxPayment} disabled={!props.sandboxSelected || (!preview && !props.checkoutStarted) || props.operationBusy}>{props.paymentLoading ? 'Waiting for sandbox status…' : props.paymentIntent ? 'Check sandbox payment status' : props.checkoutStarted ? 'Retry same checkout' : 'Create test order and sandbox payment'}</button>}
+      {props.orderId && props.paymentIntent?.status !== 'PENDING' && <button className="seller-secondary-button" disabled={props.operationBusy} onClick={props.onFinishPayment}>Continue shopping</button>}
+      <small className="sandbox-idempotency-note">Retries in this checkout reuse the same order and payment keys. Refreshing the cart does not discard the checkout outcome.</small>
+    </div>}
   </aside></div>
 }
 
@@ -209,12 +307,12 @@ function App() {
   useEffect(() => { if (!authApi.isAvailable()) return; void authApi.me().then((nextIdentity) => { setIdentity(nextIdentity); setAuthError(null) }).catch((reason: unknown) => setAuthError(reason instanceof Error ? reason.message : 'The authentication service could not verify the current session.')) }, [])
   if (route === 'login') return <LoginView onLogin={(nextIdentity) => { setAuthError(null); setIdentity(nextIdentity) }} />
   if (route === 'verify-email') return <VerifyEmailView onLogin={(nextIdentity) => { setAuthError(null); setIdentity(nextIdentity) }} />
-  if (route === 'seller') return identity?.role === 'seller' ? <SellerView /> : <Storefront identity={identity} />
-  if (route === 'admin') return identity?.role === 'admin' ? <AdminView /> : <Storefront identity={identity} />
-  if (route === 'support') return identity?.role === 'buyer' || identity?.role === 'support' || identity?.role === 'admin' ? <SupportView /> : <Storefront identity={identity} />
-  if (route === 'orders') return identity?.role === 'buyer' ? <OrdersView /> : <Storefront identity={identity} />
+  if (route === 'seller') return identity?.role === 'seller' ? <SellerView /> : <Storefront key={identityKey(identity)} identity={identity} />
+  if (route === 'admin') return identity?.role === 'admin' ? <AdminView /> : <Storefront key={identityKey(identity)} identity={identity} />
+  if (route === 'support') return identity?.role === 'buyer' || identity?.role === 'support' || identity?.role === 'admin' ? <SupportView /> : <Storefront key={identityKey(identity)} identity={identity} />
+  if (route === 'orders') return identity?.role === 'buyer' ? <OrdersView /> : <Storefront key={identityKey(identity)} identity={identity} />
   if (route === 'notifications') return <NotificationsView />
-  return <><Storefront identity={identity} />{authError && <div className="app-auth-error" role="alert"><strong>Authentication error</strong><span>{authError}</span></div>}</>
+  return <><Storefront key={identityKey(identity)} identity={identity} />{authError && <div className="app-auth-error" role="alert"><strong>Authentication error</strong><span>{authError}</span></div>}</>
 }
 
 export default App

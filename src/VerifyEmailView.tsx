@@ -10,7 +10,7 @@ function routeValue(name: string) {
 }
 
 export default function VerifyEmailView({ onLogin }: { onLogin: (identity: DevIdentity) => void }) {
-  const [email, setEmail] = useState(() => routeValue('email') || authApi.getIdentity()?.email || '')
+  const [email] = useState(() => authApi.getIdentity()?.email || routeValue('email') || '')
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,7 +26,7 @@ export default function VerifyEmailView({ onLogin }: { onLogin: (identity: DevId
     setMessage(null)
     setDevelopmentToken(null)
     try {
-      const result = await authApi.requestEmailVerification(email)
+      const result = await authApi.requestEmailVerification()
       setMessage(`${result.message} Email delivery provider is not connected.`)
       setDevelopmentToken(result.developmentToken ?? null)
     } catch (reason: unknown) {
@@ -64,10 +64,11 @@ export default function VerifyEmailView({ onLogin }: { onLogin: (identity: DevId
       {!authApi.isAvailable() ? <div className="auth-unavailable" role="status"><CircleAlert size={24} /><div><strong>Authentication is not configured</strong><p>{authApi.unavailableMessage()}</p></div></div> : <>
         {message && <div className="auth-success" role="status">{message}</div>}
         {error && <div className="auth-error" role="alert"><CircleAlert size={17} />{error}</div>}
-        <form className="auth-form auth-form-section" onSubmit={(event) => void requestVerification(event)}>
-          <div className="auth-section-heading"><MailCheck size={18} /><strong>Request verification</strong></div>
-          <label className="form-field"><span>Email</span><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-          <button className="auth-submit" type="submit" disabled={busy}><MailCheck size={16} />{busy ? 'Working…' : 'Request verification'}</button>
+         <form className="auth-form auth-form-section" onSubmit={(event) => void requestVerification(event)}>
+           <div className="auth-section-heading"><MailCheck size={18} /><strong>Request verification</strong></div>
+           <label className="form-field"><span>Signed-in email</span><input type="email" autoComplete="email" value={email} readOnly required /><small className="field-help">Verification instructions are requested for the authenticated account.</small></label>
+           {!authApi.isAuthenticated() && <p className="field-help">Sign in first to request a new verification token.</p>}
+           <button className="auth-submit" type="submit" disabled={busy || !authApi.isAuthenticated()}><MailCheck size={16} />{busy ? 'Working…' : 'Request verification'}</button>
         </form>
         <form className="auth-form auth-form-section" onSubmit={(event) => void verify(event)}>
           <div className="auth-section-heading"><ShieldCheck size={18} /><strong>Enter verification token</strong></div>

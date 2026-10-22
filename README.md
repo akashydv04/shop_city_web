@@ -1,5 +1,7 @@
 # DukaanSetu web
 
+For the feature inventory, verification evidence, and remaining release blockers, see `DEVELOPMENT_REPORT.md` (22 October 2026). Run `npm run check` for TypeScript and the API-adapter regression suite. These tests use mocked HTTP responses; they do not replace authenticated browser acceptance testing.
+
 A focused customer-facing storefront foundation for Gurugram neighbourhood commerce. Checkout remains preview-first. When `VITE_API_BASE_URL` is configured, the frontend supports API-backed registration, login, logout, session restore, role-aware navigation, and an explicitly selected local sandbox payment flow in `dev` only. In `dev` only, a clearly labelled seeded-login fallback remains available for local testing.
 
 ## Environment configuration
@@ -92,7 +94,7 @@ When enabled, `src/services/sellerApi.ts` uses these backend routes with `Author
 - `GET /api/seller/shops/{shopId}/products` — load the product catalogue for an approved seller shop.
 - `POST /api/seller/shops/{shopId}/products` — add `{ "name": "...", "description": "...", "price": 99.00, "initialQuantity": 10 }` to an approved seller shop.
 - `PATCH /api/seller/shops/{shopId}/products/{productId}` — update `name`, `description`, `price`, `quantity`, and `active` for one product.
-- `GET /api/seller/shops/{shopId}/fulfilment` and `PUT /api/seller/shops/{shopId}/fulfilment` — read and save delivery/pickup enablement and the server-applied `deliveryFee` for an approved shop.
+- `GET /api/seller/shops/{shopId}/fulfilment` and `PATCH /api/seller/shops/{shopId}/fulfilment` — read and save delivery/pickup enablement, `deliveryFee`, `minimumOrder`, and `businessTimezone` for an approved shop.
 - `GET /api/seller/shops/{shopId}/delivery-slots`, `POST /api/seller/shops/{shopId}/delivery-slots`, and `PATCH /api/seller/shops/{shopId}/delivery-slots/{slotId}` — list, create, and enable/disable date/time/capacity delivery slots. The seller studio only exposes this section for approved shops and keeps the backend response as the displayed state.
 
 The adapter accepts `status`, `reviewStatus`, or `approvalStatus` values from the backend and displays `Pending review`, `Approved`, or `Rejected`, including a backend rejection reason when present. The frontend does not approve sellers or shops. If the backend does not expose an onboarding endpoint, the UI shows the actual request failure rather than pretending a submission succeeded.
@@ -103,7 +105,9 @@ The seller studio also shows a read-only **Low-stock watch** for active products
 
 The seller studio also has an order queue. It reads `GET /api/seller/orders`, displays backend order items/totals/statuses, and sends valid transitions to `POST /api/orders/{orderId}/status`. The UI only renders actions permitted by the current status (`PENDING -> CONFIRMED/CANCELLED -> PREPARING -> READY -> COMPLETED`), confirms every action, and refreshes the queue after success. If the configured backend does not expose the seller queue route yet, the studio shows the actual request error; it never creates local or fake orders.
 
-The login screen supports real `buyer` and `seller` registration and login through `POST /api/auth/register` and `POST /api/auth/login`. It stores the returned bearer token and user metadata in browser `localStorage`, verifies the session with `GET /api/auth/me` on startup, and calls `POST /api/auth/logout` before clearing a real session. Password recovery uses `POST /api/auth/password-reset/request` and `POST /api/auth/password-reset/confirm`; email verification is available at `#verify-email` through `POST /api/auth/verification/resend` and `POST /api/auth/verify-email`. Password reset clears the locally stored bearer session unless the backend returns a replacement session, and verification updates it when the backend returns one. The UI states that an email provider is not connected; it does not claim email delivery. In `dev` only, an explicitly returned development verification/reset token may be shown for local testing. Such tokens are never parsed or displayed in UAT, preprod, or prod. The explicit seeded fallback supports `buyer`, `seller`, `support`, and `admin`; only that fallback may send `X-User-Id`. Buyer, seller, order, customer-support, and admin adapters send the bearer token on protected requests and show backend/auth errors honestly. Demo mode (no API URL with dev fallback enabled) keeps the local in-memory cart and shows an explicit preview-only/unavailable fulfilment and checkout state. With a signed-in buyer, the cart reads fulfilment options from `GET /api/carts/current/fulfilment-options`, lets the buyer choose pickup or delivery and an available slot, and sends `{ "fulfilmentMethod": "PICKUP|DELIVERY", "deliverySlotId": "..." }` to `POST /api/carts/current/checkout-preview`. The preview displays server subtotal, delivery fee, total, chosen slot, and `paymentAvailable: false`; it does not create an order until the buyer explicitly selects the dev-only sandbox flow described above.
+The login screen supports buyer/seller registration and login through `POST /api/auth/register` and `POST /api/auth/login`, session restoration through `GET /api/auth/me`, and logout. Password recovery uses `POST /api/auth/request-password-reset` and `POST /api/auth/reset-password`. Email verification at `#verify-email` uses authenticated `POST /api/auth/request-email-verification` for the current account and public `POST /api/auth/verify-email` for the token. An email provider is not connected. Explicit development tokens are shown only in dev, never in UAT/preprod/prod. Only the dev seeded fallback sends `X-User-Id`; real accounts send bearer authentication.
+
+The API cart offers **Take away** (`PICKUP`) and **Home delivery** (`DELIVERY`), based on shop settings. It sends the selected method and optional `deliverySlotId` to the checkout-preview and order APIs. Preview displays server subtotal, delivery fee, total, and payment availability without placing an order. Unscheduled delivery does not promise a delivery time. Order creation consumes the cart; the sandbox result stays visible even when the cart is empty. Checkout retry keys survive retries in the mounted checkout, but not a full reload. Demo mode uses an in-memory cart and never creates orders or payments.
 
 ### Admin console
 
@@ -130,14 +134,13 @@ Use **Orders** in the storefront header or open `/#orders` directly after signin
 
 Buyers can use **Support** in the storefront header, the **Need help with an order?** entry on `/#orders`, or open `/#support` to create and review cases. `src/services/supportApi.ts` calls these customer routes with the bearer session:
 
-- `POST /api/support/cases` with `{ "orderId": "...", "reasonCode": "...", "description": "..." }` — create a case.
+- `POST /api/support/cases` with `reasonCode`, `description`, and optional `orderId` or `shopId` — create an order-related, shop-related, or general case.
 - `GET /api/support/cases` — list the signed-in buyer's cases.
 - `GET /api/support/cases/{caseId}` — read one buyer-owned case.
 
 Support operators and admins can open `/#support` to use the queue. The adapter sends the bearer session and restricts queue/detail/status calls in the browser to `SUPPORT` or `ADMIN` identities. The dev seeded fallback is the only case that uses `X-User-Id`.
 
-- `GET /api/support/queue?status=OPEN` — load the support queue.
-- `GET /api/support/cases/{caseId}` — read queue case details.
+- `GET /api/support/queue` with optional `status=OPEN|IN_REVIEW|RESOLVED|CLOSED` — load the support queue and operator-authorized case details. The individual-case GET endpoint is buyer-only.
 - `PATCH /api/support/cases/{caseId}/status` with `{ "status": "OPEN|IN_REVIEW|RESOLVED|CLOSED", "resolutionNote": "..." }` — update a case status and optional resolution note.
 
 The customer and operator views show loading, error, and empty states and keep the backend response as the displayed state. The workflow explicitly does not automatically perform refunds or any other financial decision. Without a valid account session, these views fail closed.
@@ -148,9 +151,9 @@ In `dev` only, a buyer can open an order detail from `/#orders` and submit a ful
 
 `src/services/refundApi.ts` uses the bearer session for real accounts and the existing seeded `X-User-Id` fallback only when the app is in `dev` and no bearer session exists:
 
-- `POST /api/orders/{orderId}/refund-requests` with `{ "amount": 125.00, "reason": "..." }` — create a buyer-owned full or partial request. The full/partial choice is represented by the requested amount; the order total is used for a full request.
+- `POST /api/orders/{orderId}/refund-requests` with `Idempotency-Key` and `{ "amount": 125.00, "reason": "..." }` — create a buyer-owned request. The caller preserves the submission key for ambiguous retries, including session reloads.
 - `GET /api/refunds` and `GET /api/orders/{orderId}/refunds` — read the signed-in buyer's requests.
-- `GET /api/refunds?status=REQUESTED` and `GET /api/refunds?status=UNDER_REVIEW` — load the Support/Admin review queue. The web adapter merges both backend statuses; there is no `/api/refunds/queue` route.
+- `GET /api/refunds?status=REQUESTED`, `UNDER_REVIEW`, and `APPROVED` — load and merge the review/completion queue. There is no generic status-update or `/api/refunds/queue` route.
 - `PATCH /api/refunds/{requestId}/decision` with `{ "decision": "APPROVED|REJECTED", "note": "..." }` — record an explicitly confirmed authorized-human decision.
 - `POST /api/refunds/{requestId}/sandbox-complete` — explicitly complete an approved refund through the local sandbox only.
 
@@ -171,6 +174,8 @@ Other available commands:
 
 ```bash
 npm run build          # TypeScript check + fail-closed prod-mode Vite build
+npm run check          # TypeScript + isolated API adapter contract tests
+npm test               # Mocked-HTTP adapter regression tests
 npm run build:dev      # Build with dev mode configuration
 npm run build:uat      # Build with UAT configuration
 npm run build:preprod  # Build with preprod configuration

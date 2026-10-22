@@ -6,10 +6,11 @@ export interface AppNotification {
   title: string
   message: string
   read: boolean
+  readAt?: string
   createdAt?: string
   type?: string
-  relatedType?: string
-  relatedId?: string
+  relatedEntityType?: string
+  relatedEntityId?: string
   href?: string
 }
 
@@ -88,14 +89,18 @@ function listPayload(payload: unknown): unknown[] {
   return []
 }
 
-function safeHashHref(rawType: string, rawId: string, role: AppRole): string | undefined {
+function safeHashHref(rawType: string, role: AppRole): string | undefined {
   const type = rawType.toLowerCase().replace(/[-\s]/g, '_')
-  if (type.includes('order')) return role === 'buyer' ? '#orders' : undefined
   if (type.includes('support') || type.includes('case') || type.includes('ticket')) {
     return role === 'buyer' || role === 'support' || role === 'admin' ? '#support' : undefined
   }
   if (type.includes('refund')) {
     return role === 'buyer' ? '#orders' : role === 'support' || role === 'admin' ? '#support' : undefined
+  }
+  if (type.includes('order')) {
+    if (role === 'buyer') return '#orders'
+    if (role === 'seller') return '#seller'
+    return undefined
   }
   if (type.includes('seller') || type.includes('product') || type.includes('shop')) {
     if (role === 'seller') return '#seller'
@@ -105,7 +110,7 @@ function safeHashHref(rawType: string, rawId: string, role: AppRole): string | u
   if (type.includes('admin') || type.includes('review')) return role === 'admin' ? '#admin' : undefined
   // Ignore server-provided external URLs. Notification links are restricted to
   // known in-app destinations so a notification cannot turn into an open redirect.
-  if (rawId === 'notifications') return '#notifications'
+  if (type.includes('notification')) return '#notifications'
   return undefined
 }
 
@@ -114,18 +119,22 @@ function normalizeNotification(value: unknown, role: AppRole): AppNotification |
   const id = stringValue(raw.id ?? raw.notificationId ?? raw.notification_id)
   if (!id) return null
   const related = objectValue(raw.related ?? raw.entity ?? raw.reference)
-  const relatedType = stringValue(raw.relatedType ?? raw.related_type ?? raw.entityType ?? raw.entity_type ?? raw.referenceType ?? raw.reference_type ?? related.type)
-  const relatedId = stringValue(raw.relatedId ?? raw.related_id ?? raw.entityId ?? raw.entity_id ?? raw.referenceId ?? raw.reference_id ?? related.id)
+  const relatedEntityType = stringValue(raw.relatedEntityType ?? raw.related_entity_type ?? raw.relatedType ?? raw.related_type ?? raw.entityType ?? raw.entity_type ?? raw.referenceType ?? raw.reference_type ?? related.type)
+  const relatedEntityId = stringValue(raw.relatedEntityId ?? raw.related_entity_id ?? raw.relatedId ?? raw.related_id ?? raw.entityId ?? raw.entity_id ?? raw.referenceId ?? raw.reference_id ?? related.id)
+  const readAt = stringValue(raw.readAt ?? raw.read_at)
+  const type = stringValue(raw.type ?? raw.event)
+  const href = safeHashHref(relatedEntityType || type, role)
   return {
     id,
     title: stringValue(raw.title ?? raw.subject ?? raw.event ?? raw.type) || 'Notification',
     message: stringValue(raw.message ?? raw.body ?? raw.description ?? raw.text) || 'You have an update from DukaanSetu.',
-    read: booleanValue(raw.read ?? raw.isRead ?? raw.is_read ?? raw.seen, false),
+    read: 'readAt' in raw || 'read_at' in raw ? Boolean(readAt) : booleanValue(raw.read ?? raw.isRead ?? raw.is_read ?? raw.seen, false),
+    ...(readAt ? { readAt } : {}),
     ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp ?? raw.sentAt ?? raw.sent_at) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.timestamp ?? raw.sentAt ?? raw.sent_at) } : {}),
-    ...(stringValue(raw.type ?? raw.event) ? { type: stringValue(raw.type ?? raw.event) } : {}),
-    ...(relatedType ? { relatedType } : {}),
-    ...(relatedId ? { relatedId } : {}),
-    ...(safeHashHref(relatedType || stringValue(raw.type ?? raw.event), relatedId, role) ? { href: safeHashHref(relatedType || stringValue(raw.type ?? raw.event), relatedId, role) } : {}),
+    ...(type ? { type } : {}),
+    ...(relatedEntityType ? { relatedEntityType } : {}),
+    ...(relatedEntityId ? { relatedEntityId } : {}),
+    ...(href ? { href } : {}),
   }
 }
 
@@ -158,14 +167,16 @@ export const notificationsApi = {
     return parseUnreadCount(await request('/api/notifications/unread-count'))
   },
   async markRead(id: string) {
-    await request(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' })
+    const payload = await request(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' })
     notifyChanged()
+    const { root, data } = payloadRoot(payload)
+    return stringValue(root.readAt ?? root.read_at ?? data.readAt ?? data.read_at) || undefined
   },
   async markAllRead() {
     await request('/api/notifications/read-all', { method: 'POST' })
     notifyChanged()
   },
-  roleHref(type: string | undefined, id: string | undefined, role: AppRole) {
-    return safeHashHref(type ?? '', id ?? '', role)
+  roleHref(type: string | undefined, _id: string | undefined, role: AppRole) {
+    return safeHashHref(type ?? '', role)
   },
 }

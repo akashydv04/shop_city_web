@@ -3,6 +3,15 @@ import { authApi } from './authApi'
 
 export type SellerReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'COMPLETED' | 'CANCELLED'
+export type OrderPaymentMethod = 'ONLINE' | 'CASH_LOCAL'
+export type OrderPaymentStatus = 'PAYMENT_PENDING' | 'CONFIRMED' | 'PAID' | 'FAILED' | 'CASH_DUE'
+
+export interface OrderStatusHistoryEntry {
+  fromStatus: OrderStatus | null
+  toStatus: OrderStatus
+  changedById?: string
+  changedAt?: string
+}
 
 export interface OrderItem {
   productId: string
@@ -15,10 +24,15 @@ export interface SellerOrder {
   id: string
   buyerId: string
   shopId: string
+  shopName: string
   status: OrderStatus
+  paymentMethod?: OrderPaymentMethod
+  paymentStatus?: OrderPaymentStatus
+  statusHistory: OrderStatusHistoryEntry[]
   total: number
   items: OrderItem[]
   createdAt?: string
+  updatedAt?: string
 }
 
 export interface SellerProfile {
@@ -82,6 +96,8 @@ export interface FulfilmentSettings {
   deliveryEnabled: boolean
   pickupEnabled: boolean
   deliveryFee: number
+  minimumOrder: number
+  businessTimezone: string
 }
 
 export interface DeliverySlot {
@@ -143,6 +159,7 @@ function booleanValue(value: unknown, fallback: boolean) {
 
 function statusValue(value: unknown): SellerReviewStatus {
   const status = stringValue(value, 'PENDING').toUpperCase()
+  if (status === 'VERIFIED') return 'APPROVED'
   return status === 'APPROVED' || status === 'REJECTED' ? status : 'PENDING'
 }
 
@@ -165,14 +182,31 @@ export function mapOrder(payload: unknown): SellerOrder {
   const envelope = objectValue(payload)
   const raw = objectValue(envelope.order ?? envelope.data ?? payload)
   const rawItems = Array.isArray(raw.items) ? raw.items : Array.isArray(raw.orderItems) ? raw.orderItems : []
+  const rawHistory = raw.statusHistory ?? raw.status_history
+  const paymentMethod = stringValue(raw.paymentMethod ?? raw.payment_method).toUpperCase()
+  const paymentStatus = stringValue(raw.paymentStatus ?? raw.payment_status).toUpperCase()
   return {
     id: stringValue(raw.id),
     buyerId: stringValue(raw.buyerId ?? raw.buyer_id ?? objectValue(raw.buyer).id),
     shopId: stringValue(raw.shopId ?? raw.shop_id ?? objectValue(raw.shop).id),
+    shopName: stringValue(raw.shopName ?? raw.shop_name ?? objectValue(raw.shop).name) || 'Shop name unavailable',
     status: orderStatusValue(raw.status),
+    ...(paymentMethod === 'ONLINE' || paymentMethod === 'CASH_LOCAL' ? { paymentMethod } : {}),
+    ...(paymentStatus === 'PAYMENT_PENDING' || paymentStatus === 'CONFIRMED' || paymentStatus === 'PAID' || paymentStatus === 'FAILED' || paymentStatus === 'CASH_DUE' ? { paymentStatus } : {}),
+    statusHistory: Array.isArray(rawHistory) ? rawHistory.map((entry) => {
+      const history = objectValue(entry)
+      const fromStatus = history.fromStatus ?? history.from_status
+      return {
+        fromStatus: fromStatus ? orderStatusValue(fromStatus) : null,
+        toStatus: orderStatusValue(history.toStatus ?? history.to_status),
+        ...(history.changedById || history.changed_by_id ? { changedById: stringValue(history.changedById ?? history.changed_by_id) } : {}),
+        ...(history.changedAt || history.changed_at ? { changedAt: stringValue(history.changedAt ?? history.changed_at) } : {}),
+      }
+    }) : [],
     total: Math.max(0, numberValue(raw.total ?? raw.amount, 0)),
     items: rawItems.map(mapOrderItem),
     ...(raw.createdAt || raw.created_at ? { createdAt: String(raw.createdAt ?? raw.created_at) } : {}),
+    ...(raw.updatedAt || raw.updated_at ? { updatedAt: String(raw.updatedAt ?? raw.updated_at) } : {}),
   }
 }
 
@@ -205,7 +239,7 @@ function mapProfile(payload: unknown): SellerProfile {
     phone: stringValue(raw.phone ?? raw.phoneNumber),
     address: stringValue(raw.address),
     city: stringValue(raw.city, 'Gurugram'),
-    status: statusValue(raw.status ?? raw.reviewStatus ?? raw.approvalStatus),
+    status: statusValue(raw.verificationStatus ?? raw.verification_status ?? raw.status ?? raw.reviewStatus ?? raw.approvalStatus),
     ...(raw.rejectionReason ? { rejectionReason: String(raw.rejectionReason) } : {}),
   }
 }
@@ -241,27 +275,29 @@ function mapProduct(payload: unknown, fallbackShopId = ''): SellerProduct {
 function mapFulfilment(payload: unknown, fallbackShopId = ''): FulfilmentSettings {
   const envelope = objectValue(payload)
   const data = objectValue(envelope.data)
-  const raw = objectValue(envelope.fulfilment ?? envelope.fulfillment ?? envelope.settings ?? data.fulfilment ?? data.fulfillment ?? data ?? payload)
+  const raw = objectValue(envelope.fulfilment ?? envelope.fulfillment ?? envelope.settings ?? data.fulfilment ?? data.fulfillment ?? (Object.keys(data).length ? data : payload))
   return {
     shopId: stringValue(raw.shopId ?? raw.shop_id, fallbackShopId),
     deliveryEnabled: booleanValue(raw.deliveryEnabled ?? raw.delivery_enabled ?? raw.delivery, false),
     pickupEnabled: booleanValue(raw.pickupEnabled ?? raw.pickup_enabled ?? raw.pickup, false),
     deliveryFee: Math.max(0, numberValue(raw.deliveryFee ?? raw.delivery_fee, 0)),
+    minimumOrder: Math.max(0, numberValue(raw.minimumOrder ?? raw.minimum_order, 0)),
+    businessTimezone: stringValue(raw.businessTimezone ?? raw.business_timezone, 'Asia/Kolkata'),
   }
 }
 
 function mapDeliverySlot(payload: unknown, fallbackShopId = ''): DeliverySlot {
   const envelope = objectValue(payload)
   const data = objectValue(envelope.data)
-  const raw = objectValue(envelope.slot ?? envelope.deliverySlot ?? data.slot ?? data.deliverySlot ?? data ?? payload)
+  const raw = objectValue(envelope.slot ?? envelope.deliverySlot ?? data.slot ?? data.deliverySlot ?? (Object.keys(data).length ? data : payload))
   return {
     id: stringValue(raw.id),
     shopId: stringValue(raw.shopId ?? raw.shop_id, fallbackShopId),
-    date: stringValue(raw.date ?? raw.slotDate ?? raw.slot_date),
+    date: stringValue(raw.localDate ?? raw.local_date ?? raw.date ?? raw.slotDate ?? raw.slot_date),
     startTime: stringValue(raw.startTime ?? raw.start_time),
     endTime: stringValue(raw.endTime ?? raw.end_time),
     capacity: Math.max(0, Math.floor(numberValue(raw.capacity, 0))),
-    booked: Math.max(0, Math.floor(numberValue(raw.booked ?? raw.bookedCount ?? raw.booked_count, 0))),
+    booked: Math.max(0, Math.floor(numberValue(raw.reservedCount ?? raw.reserved_count ?? raw.booked ?? raw.bookedCount ?? raw.booked_count, 0))),
     active: booleanValue(raw.active ?? raw.enabled, true),
   }
 }
@@ -387,14 +423,14 @@ export const sellerApi = {
       return mapFulfilment(await request(`/api/seller/shops/${encodeURIComponent(shopId)}/fulfilment`), shopId)
     } catch (error) {
       if (error instanceof SellerApiError && error.status === 404) {
-        return { shopId, deliveryEnabled: false, pickupEnabled: false, deliveryFee: 0 }
+        return { shopId, deliveryEnabled: false, pickupEnabled: false, deliveryFee: 0, minimumOrder: 0, businessTimezone: 'Asia/Kolkata' }
       }
       throw error
     }
   },
   async saveFulfilment(shopId: string, input: Omit<FulfilmentSettings, 'shopId'>): Promise<FulfilmentSettings> {
     return mapFulfilment(await request(`/api/seller/shops/${encodeURIComponent(shopId)}/fulfilment`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(input),
     }), shopId)
   },
@@ -404,7 +440,7 @@ export const sellerApi = {
   async createDeliverySlot(shopId: string, input: DeliverySlotInput): Promise<DeliverySlot> {
     return mapDeliverySlot(await request(`/api/seller/shops/${encodeURIComponent(shopId)}/delivery-slots`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ localDate: input.date, startTime: input.startTime, endTime: input.endTime, capacity: input.capacity }),
     }), shopId)
   },
   async toggleDeliverySlot(shopId: string, slotId: string, active: boolean): Promise<DeliverySlot> {

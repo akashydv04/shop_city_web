@@ -16,13 +16,17 @@ export interface CartSnapshot {
 }
 
 export interface CheckoutPreview {
+  cartId?: string
+  shopId?: string
   subtotal?: number
   deliveryFee?: number
   total?: number
   fulfilmentMethod?: 'PICKUP' | 'DELIVERY'
+  slotId?: string
   deliverySlot?: AvailableDeliverySlot
   message: string
-  paymentAvailable: false
+  paymentAvailable: boolean
+  checkoutStatus?: string
 }
 
 export interface AvailableDeliverySlot {
@@ -119,10 +123,6 @@ function mapCart(payload: unknown, products: Product[], shops: Shop[]): CartSnap
   }
 }
 
-function isNotFound(response: Response) {
-  return response.status === 404
-}
-
 export interface CartApi {
   load(products: Product[], shops: Shop[]): Promise<CartSnapshot>
   addItem(product: Product, products: Product[], shops: Shop[]): Promise<CartSnapshot>
@@ -142,26 +142,30 @@ function ensureEnabled() {
 
 function mapAvailableSlot(payload: unknown): AvailableDeliverySlot {
   const raw = objectValue(payload)
+  const capacity = asNumber(raw.capacity)
+  const reserved = asNumber(raw.reservedCount)
+  const remainingCapacity = asNumber(raw.remainingCapacity ?? raw.remaining_capacity)
+    ?? (capacity !== undefined && reserved !== undefined ? Math.max(0, capacity - reserved) : undefined)
   return {
     id: String(raw.id ?? ''),
-    date: String(raw.date ?? raw.slotDate ?? raw.slot_date ?? ''),
+    date: String(raw.date ?? raw.localDate ?? raw.slotDate ?? raw.slot_date ?? ''),
     startTime: String(raw.startTime ?? raw.start_time ?? ''),
     endTime: String(raw.endTime ?? raw.end_time ?? ''),
     ...(asNumber(raw.capacity) !== undefined ? { capacity: asNumber(raw.capacity) } : {}),
-    ...(asNumber(raw.remainingCapacity ?? raw.remaining_capacity) !== undefined ? { remainingCapacity: asNumber(raw.remainingCapacity ?? raw.remaining_capacity) } : {}),
+    ...(remainingCapacity !== undefined ? { remainingCapacity } : {}),
   }
 }
 
 function mapFulfilmentOptions(payload: unknown): FulfilmentOptions {
   const root = objectValue(payload)
   const data = objectValue(root.data)
-  const raw = objectValue(root.fulfilment ?? root.fulfillment ?? data.fulfilment ?? data.fulfillment ?? data ?? payload)
+  const raw = objectValue(root.fulfilment ?? root.fulfillment ?? data.fulfilment ?? data.fulfillment ?? root.data ?? payload)
   const rawSlots = Array.isArray(raw.slots) ? raw.slots : Array.isArray(raw.deliverySlots) ? raw.deliverySlots : []
   return {
     deliveryEnabled: raw.deliveryEnabled === undefined && raw.delivery_enabled === undefined ? Boolean(raw.delivery) : Boolean(raw.deliveryEnabled ?? raw.delivery_enabled),
     pickupEnabled: raw.pickupEnabled === undefined && raw.pickup_enabled === undefined ? Boolean(raw.pickup) : Boolean(raw.pickupEnabled ?? raw.pickup_enabled),
     deliveryFee: Math.max(0, asNumber(raw.deliveryFee ?? raw.delivery_fee) ?? 0),
-    slots: rawSlots.map(mapAvailableSlot).filter((slot) => slot.id && slot.date && slot.startTime && slot.endTime),
+    slots: rawSlots.map(mapAvailableSlot).filter((slot) => slot.id && slot.date && slot.startTime && slot.endTime && (slot.remainingCapacity === undefined || slot.remainingCapacity > 0)),
   }
 }
 
@@ -192,8 +196,11 @@ async function mutate(
   products: Product[],
   shops: Shop[],
 ) {
+  const identity = ensureEnabled()
   const response = await request(path, init)
   const body = await readBody(response)
+  // Do not follow a previous account's mutation with a read using new credentials.
+  if (authApi.getIdentity()?.id !== identity.id || authApi.getIdentity()?.role !== identity.role) throw new Error('The signed-in account changed. Reload your cart.')
   return body === undefined ? cartApi.load(products, shops) : mapCart(body, products, shops)
 }
 
@@ -201,8 +208,8 @@ export const cartApi: CartApi = {
   async load(products, shops) {
     ensureEnabled()
     const response = await fetch(`${appConfig.apiBaseUrl}/api/carts/current`, { headers: authApi.headers({ Accept: 'application/json' }) })
-    // A buyer with no active cart is an empty cart, not a catalogue failure.
-    if (isNotFound(response) || response.status === 204) return { lines: [] }
+    // The API returns a 200 empty cart when the buyer has no active cart.
+    if (response.status === 204) return { lines: [] }
     if (!response.ok) {
       const body = await readBody(response)
       const message = body && typeof body === 'object' && 'message' in body ? String((body as { message?: unknown }).message) : `Cart request failed (${response.status})`
@@ -244,13 +251,17 @@ export const cartApi: CartApi = {
     const payload = objectValue(await response.json())
     const rawSlot = payload.deliverySlot ?? payload.slot
     return {
+      ...(payload.cartId ? { cartId: String(payload.cartId) } : {}),
+      ...(payload.shopId ? { shopId: String(payload.shopId) } : {}),
       subtotal: asNumber(payload.subtotal),
       deliveryFee: asNumber(payload.deliveryFee ?? payload.delivery),
       total: asNumber(payload.total),
       fulfilmentMethod: String(payload.fulfilmentMethod ?? payload.fulfillmentMethod ?? options.fulfilmentMethod).toUpperCase() === 'DELIVERY' ? 'DELIVERY' : 'PICKUP',
+      ...(payload.slotId ? { slotId: String(payload.slotId) } : {}),
       ...(rawSlot ? { deliverySlot: mapAvailableSlot(rawSlot) } : {}),
-      message: String(payload.message ?? 'Checkout preview is available, but payment is not available in this MVP.'),
-      paymentAvailable: false,
+      message: String(payload.message ?? 'Checkout preview is ready.'),
+      paymentAvailable: Boolean(payload.paymentAvailable),
+      ...(payload.checkoutStatus ? { checkoutStatus: String(payload.checkoutStatus) } : {}),
     }
   },
 }

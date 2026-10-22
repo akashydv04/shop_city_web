@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "tsc -b && npm test",
     "dev": "vite --mode dev",
     "dev:demo": "vite --mode demo --host 0.0.0.0 --port 5173 --strictPort",
     "dev:api": "vite --mode api --host 0.0.0.0 --port 5174 --strictPort",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0"
+    "@types/react-dom": "^19.3.0",
+    "rolldown": "1.2.14"
   }
 }

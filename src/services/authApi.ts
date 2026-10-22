@@ -7,6 +7,7 @@ export interface UserIdentity {
   role: AppRole
   displayName?: string
   email?: string
+  emailVerified?: boolean
 }
 
 // Kept as an alias for the existing view imports while the UI is migrated from
@@ -24,6 +25,7 @@ export interface AuthActionResult {
   message: string
   /** A one-time local testing token. This field is only populated in dev. */
   developmentToken?: string
+  emailVerified?: boolean
   session?: AuthSession
 }
 
@@ -90,6 +92,7 @@ export function mapIdentity(payload: unknown): UserIdentity {
     role,
     ...(stringValue(raw.displayName ?? raw.display_name ?? raw.name) ? { displayName: stringValue(raw.displayName ?? raw.display_name ?? raw.name) } : {}),
     ...(stringValue(raw.email) ? { email: stringValue(raw.email) } : {}),
+    ...(typeof raw.emailVerified === 'boolean' || typeof raw.email_verified === 'boolean' ? { emailVerified: Boolean(raw.emailVerified ?? raw.email_verified) } : {}),
   }
 }
 
@@ -203,6 +206,7 @@ function actionResult(payload: unknown, fallback: string): AuthActionResult {
   return {
     message,
     ...(developmentToken ? { developmentToken } : {}),
+    ...(typeof root.emailVerified === 'boolean' || typeof data.emailVerified === 'boolean' ? { emailVerified: Boolean(root.emailVerified ?? data.emailVerified) } : {}),
     ...(session ? { session } : {}),
   }
 }
@@ -275,13 +279,13 @@ export const authApi = {
     }
   },
   async requestPasswordReset(email: string): Promise<AuthActionResult> {
-    return actionResult(await request('/api/auth/password-reset/request', {
+    return actionResult(await request('/api/auth/request-password-reset', {
       method: 'POST',
       body: JSON.stringify({ email: email.trim() }),
     }), 'If the account is eligible, password reset instructions are available.')
   },
   async resetPassword(input: { token: string; newPassword: string }): Promise<AuthActionResult> {
-    const result = actionResult(await request('/api/auth/password-reset/confirm', {
+    const result = actionResult(await request('/api/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify({ token: input.token.trim(), newPassword: input.newPassword }),
     }), 'Password reset successful. Sign in with your new password.')
@@ -296,22 +300,24 @@ export const authApi = {
     }
     return result
   },
-  async requestEmailVerification(email: string): Promise<AuthActionResult> {
-    return actionResult(await request('/api/auth/verification/resend', {
+  async requestEmailVerification(_email?: string): Promise<AuthActionResult> {
+    return actionResult(await request('/api/auth/request-email-verification', {
       method: 'POST',
       headers: currentHeaders(),
-      body: JSON.stringify({ email: email.trim() }),
     }), 'If the account is eligible, verification instructions are available.')
   },
   async verifyEmail(token: string): Promise<AuthActionResult> {
     const result = actionResult(await request('/api/auth/verify-email', {
       method: 'POST',
-      headers: currentHeaders(),
       body: JSON.stringify({ token: token.trim() }),
     }), 'Email verified successfully.')
     if (result.session) {
       setDevIdentity(null)
       setSession(result.session)
+    } else if (result.emailVerified && currentSession) {
+      setSession({ ...currentSession, user: { ...currentSession.user, emailVerified: true } })
+    } else if (result.emailVerified && currentDevIdentity) {
+      setDevIdentity({ ...currentDevIdentity, emailVerified: true })
     }
     return result
   },

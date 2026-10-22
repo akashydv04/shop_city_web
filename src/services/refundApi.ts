@@ -34,11 +34,7 @@ export interface CreateRefundRequestInput {
   orderId: string
   amount: number
   reason: string
-}
-
-export interface UpdateRefundStatusInput {
-  status: RefundRequestStatus
-  decisionNote?: string
+  idempotencyKey: string
 }
 
 export class RefundApiError extends Error {
@@ -98,7 +94,7 @@ export function mapRefundRequest(payload: unknown): RefundRequest {
   return {
     id: stringValue(raw.id ?? raw.refundRequestId ?? raw.refund_request_id ?? raw.requestId ?? raw.request_id),
     orderId: stringValue(raw.orderId ?? raw.order_id ?? objectValue(raw.order).id),
-    buyerId: stringValue(raw.buyerId ?? raw.buyer_id ?? raw.customerId ?? raw.customer_id ?? buyer.id),
+    buyerId: stringValue(raw.buyerId ?? raw.buyer_id ?? raw.requesterId ?? raw.requester_id ?? raw.customerId ?? raw.customer_id ?? buyer.id),
     ...(stringValue(raw.buyerName ?? raw.buyer_name ?? buyer.displayName ?? buyer.name) ? { buyerName: stringValue(raw.buyerName ?? raw.buyer_name ?? buyer.displayName ?? buyer.name) } : {}),
     ...(stringValue(raw.buyerEmail ?? raw.buyer_email ?? buyer.email) ? { buyerEmail: stringValue(raw.buyerEmail ?? raw.buyer_email ?? buyer.email) } : {}),
      requestedAmount,
@@ -107,11 +103,11 @@ export function mapRefundRequest(payload: unknown): RefundRequest {
     reason: stringValue(raw.reason ?? raw.reasonCode ?? raw.reason_code ?? raw.description, 'No reason provided.'),
     status: statusValue(raw.status ?? raw.refundStatus ?? raw.refund_status ?? raw.state),
     ...(stringValue(raw.decisionNote ?? raw.decision_note ?? raw.note) ? { decisionNote: stringValue(raw.decisionNote ?? raw.decision_note ?? raw.note) } : {}),
-     ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
-     ...(stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) ? { updatedAt: stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
+      ...(stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) ? { createdAt: stringValue(raw.createdAt ?? raw.created_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
+      ...(stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) ? { updatedAt: stringValue(raw.updatedAt ?? raw.updated_at ?? raw.requestedAt ?? raw.requested_at) } : {}),
     financialActionRequired: raw.financialActionRequired === true || raw.financial_action_required === true,
     automaticMoneyMovement: raw.automaticMoneyMovement === true || raw.automatic_money_movement === true,
-     history: mapHistory(raw.history ?? raw.auditHistory ?? raw.audit_history ?? raw.statusHistory ?? raw.status_history),
+      history: mapHistory(raw.history ?? raw.auditHistory ?? raw.audit_history ?? raw.statusHistory ?? raw.status_history),
   }
 }
 
@@ -167,8 +163,16 @@ export const refundApi = {
   customerUnavailableMessage: () => unavailableMessage('customer'),
   reviewerUnavailableMessage: () => unavailableMessage('reviewer'),
   async create(input: CreateRefundRequestInput) {
-    if (!input.orderId || input.amount <= 0 || !input.reason.trim()) throw new RefundApiError('Choose an order, enter a positive refund amount, and provide a reason.')
-    return mapRefundRequest(await request(`/api/orders/${encodeURIComponent(input.orderId)}/refund-requests`, { method: 'POST', body: JSON.stringify({ amount: input.amount, reason: input.reason.trim() }) }, 'customer'))
+    if (!input.orderId || !Number.isFinite(input.amount) || input.amount <= 0 || !input.reason.trim()) throw new RefundApiError('Choose an order, enter a positive refund amount, and provide a reason.')
+    const idempotencyKey = input.idempotencyKey?.trim()
+    if (!idempotencyKey || idempotencyKey.length > 200) throw new RefundApiError('A stable submission key of 1–200 characters is required to submit or retry a refund request.')
+    const created = mapRefundRequest(await request(`/api/orders/${encodeURIComponent(input.orderId)}/refund-requests`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ amount: input.amount, reason: input.reason.trim() }),
+    }, 'customer'))
+    if (!created.id) throw new RefundApiError('The server did not return the refund request. Retry with the same submission key to confirm the result.')
+    return created
   },
   async listMine() {
     return listPayload(await request('/api/refunds', {}, 'customer'))
@@ -179,11 +183,12 @@ export const refundApi = {
     return found
   },
   async listQueue() {
-    const [requested, underReview] = await Promise.all([
+    const [requested, underReview, approved] = await Promise.all([
       request('/api/refunds?status=REQUESTED', {}, 'reviewer'),
       request('/api/refunds?status=UNDER_REVIEW', {}, 'reviewer'),
+      request('/api/refunds?status=APPROVED', {}, 'reviewer'),
     ])
-    const byId = new Map([...listPayload(requested), ...listPayload(underReview)].map((item) => [item.id, item]))
+    const byId = new Map([...listPayload(requested), ...listPayload(underReview), ...listPayload(approved)].map((item) => [item.id, item]))
     return [...byId.values()]
   },
   async getForReview(id: string) {
@@ -191,11 +196,15 @@ export const refundApi = {
     if (!found) throw new RefundApiError('Refund request was not found in the review queue.', 404)
     return found
   },
-  async updateStatus(_id: string, _input: UpdateRefundStatusInput): Promise<RefundRequest> {
-    throw new RefundApiError('Refund workflow status is controlled by the backend decision endpoint. Use Approve or Reject with a note.')
-  },
   async decide(id: string, decision: RefundDecision, decisionNote: string) {
     if (!decisionNote.trim()) throw new RefundApiError('A decision note is required before approving or rejecting a refund request.')
     return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}/decision`, { method: 'PATCH', body: JSON.stringify({ decision: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED', note: decisionNote.trim() }) }, 'reviewer'))
+  },
+  async completeSandbox(id: string) {
+    if (appConfig.environment !== 'dev') throw new RefundApiError('Sandbox refund completion is available only in development.')
+    return mapRefundRequest(await request(`/api/refunds/${encodeURIComponent(id)}/sandbox-complete`, { method: 'POST' }, 'reviewer'))
+  },
+  async sandboxComplete(id: string) {
+    return this.completeSandbox(id)
   },
 }
